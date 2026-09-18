@@ -1,8 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import { getDb, ensureSchema, hasDb, runs, profiles, competitors, campaigns, companies } from '@/lib/db';
+import { getDb, ensureSchema, hasDb, runs, profiles, competitors, campaigns, companies, people, emails } from '@/lib/db';
 import { crawl } from '@/lib/pipeline/crawl';
-import { buildProfile, findCompetitors, defineCampaigns, findCompanies } from '@/lib/pipeline/steps';
+import {
+  buildProfile, findCompetitors, defineCampaigns, findCompanies,
+  findDecisionMakers, writeEmail, type ScoredCompany,
+} from '@/lib/pipeline/steps';
 import { activeProvider } from '@/lib/pipeline/search';
 
 export const runtime = 'nodejs';
@@ -72,8 +75,10 @@ export async function POST(req: Request) {
 
         /* step 4 ------------------------------------------------------- */
         send({ type: 'step', step: 4, status: 'start' });
+        const foundByCampaign = new Map<string, ScoredCompany[]>();
         for (const c of saved) {
           const found = await findCompanies(c);
+          foundByCampaign.set(c.id, found);
           for (const f of found) {
             await db?.insert(companies).values({
                 id: randomUUID(),
@@ -94,6 +99,37 @@ export async function POST(req: Request) {
           send({ type: 'companies', campaignId: c.id, data: found });
         }
         send({ type: 'step', step: 4, status: 'done' });
+
+        /* step 5 ------------------------------------------------------- */
+        send({ type: 'step', step: 5, status: 'start' });
+        const leadsByCampaign = new Map<string, Awaited<ReturnType<typeof findDecisionMakers>>>();
+        for (const c of saved) {
+          const found = foundByCampaign.get(c.id) ?? [];
+          const leads = await findDecisionMakers({ name: c.name }, found);
+          leadsByCampaign.set(c.id, leads);
+          for (const l of leads) {
+            await db?.insert(people).values({ id: randomUUID(), runId, campaignId: c.id, ...l });
+          }
+          send({ type: 'people', campaignId: c.id, data: leads });
+        }
+        send({ type: 'step', step: 5, status: 'done' });
+
+        /* step 6 ------------------------------------------------------- */
+        send({ type: 'step', step: 6, status: 'start' });
+        for (const c of saved) {
+          const leads = leadsByCampaign.get(c.id) ?? [];
+          const lead = leads[0];
+          if (!lead) continue;
+          const company = (foundByCampaign.get(c.id) ?? []).find((x) => x.domain === lead.companyDomain);
+          try {
+            const email = await writeEmail(profile, c, lead, company, profile.name);
+            await db?.insert(emails).values({ id: randomUUID(), runId, campaignId: c.id, ...email });
+            send({ type: 'email', campaignId: c.id, data: email });
+          } catch {
+            // A failed draft should not fail the run.
+          }
+        }
+        send({ type: 'step', step: 6, status: 'done' });
 
         await db?.update(runs).set({ status: 'done' }).where(eqRun(runId));
         send({ type: 'done', runId });

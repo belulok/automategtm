@@ -65,3 +65,30 @@ export type Profile = typeof profiles.$inferSelect;
 export type Competitor = typeof competitors.$inferSelect;
 export type Campaign = typeof campaigns.$inferSelect;
 export type Company = typeof companies.$inferSelect;
+
+/** Step 5 — decision makers found at the target companies. */
+export const people = pgTable('people', {
+  id: text('id').primaryKey(),
+  runId: text('run_id').notNull().references(() => runs.id),
+  campaignId: text('campaign_id').notNull().references(() => campaigns.id),
+  name: text('name').notNull(),
+  title: text('title').notNull(),
+  companyDomain: text('company_domain').notNull(),
+  companyName: text('company_name'),
+  linkedinUrl: text('linkedin_url'),
+});
+
+/** Step 6 — the drafted first touch. */
+export const emails = pgTable('emails', {
+  id: text('id').primaryKey(),
+  runId: text('run_id').notNull().references(() => runs.id),
+  campaignId: text('campaign_id').notNull().references(() => campaigns.id),
+  toName: text('to_name').notNull(),
+  toTitle: text('to_title').notNull(),
+  toCompany: text('to_company').notNull(),
+  subject: text('subject').notNull(),
+  body: text('body').notNull(),
+});
+
+export type Person = typeof people.$inferSelect;
+export type Email = typeof emails.$inferSelect;

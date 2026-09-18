@@ -6,6 +6,8 @@
  * real search result from the model's own recall.
  */
 export type SearchHit = {
+  /** Full result URL. People search needs it; company search only uses the domain. */
+  url?: string;
   domain: string;
   name: string | null;
   snippet: string | null;
@@ -56,22 +58,24 @@ const SKIP = new Set([
   'bloomberg.com', 'pitchbook.com', 'glassdoor.com', 'indeed.com',
 ]);
 
-function hostOf(url: string): string | null {
+function hostOf(url: string, allowAll = false): string | null {
   try {
     const h = new URL(url).hostname.replace(/^www\./, '');
-    if (SKIP.has(h) || h.endsWith('.wikipedia.org')) return null;
+    if (!allowAll && (SKIP.has(h) || h.endsWith('.wikipedia.org'))) return null;
     return h;
   } catch {
     return null;
   }
 }
 
-function dedupe(rows: SearchHit[], limit: number, exclude?: string): SearchHit[] {
+function dedupe(rows: SearchHit[], limit: number, exclude?: string, keepDupes = false): SearchHit[] {
   const seen = new Set<string>();
   const self = exclude?.replace(/^www\./, '').toLowerCase();
   const out: SearchHit[] = [];
   for (const r of rows) {
-    if (seen.has(r.domain)) continue;
+    // People search returns many results from one host (linkedin.com), so
+    // de-duplicating by domain there would collapse them to a single profile.
+    if (!keepDupes && seen.has(r.domain)) continue;
     // Never return the company we are researching as its own competitor.
     if (self && (r.domain === self || r.domain.endsWith(`.${self}`) || self.endsWith(`.${r.domain}`))) continue;
     seen.add(r.domain);
@@ -93,7 +97,7 @@ const decode = (s: string) =>
 
 /* ------------------------------------------------------------- providers */
 
-async function viaExa(query: string, limit: number): Promise<SearchHit[]> {
+async function viaExa(query: string, limit: number, allowAll = false): Promise<SearchHit[]> {
   const res = await fetch('https://api.exa.ai/search', {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-api-key': process.env.EXA_API_KEY! },
@@ -103,12 +107,12 @@ async function viaExa(query: string, limit: number): Promise<SearchHit[]> {
   if (!res.ok) throw new Error(`Exa ${res.status}: ${await res.text()}`);
   const json = (await res.json()) as { results?: { url: string; title?: string; text?: string }[] };
   return (json.results ?? []).flatMap((r) => {
-    const domain = hostOf(r.url);
-    return domain ? [{ domain, name: r.title ?? null, snippet: r.text?.slice(0, 300) ?? null, verified: true }] : [];
+    const domain = hostOf(r.url, allowAll);
+    return domain ? [{ url: r.url, domain, name: r.title ?? null, snippet: r.text?.slice(0, 300) ?? null, verified: true }] : [];
   });
 }
 
-async function viaTavily(query: string, limit: number): Promise<SearchHit[]> {
+async function viaTavily(query: string, limit: number, allowAll = false): Promise<SearchHit[]> {
   const res = await fetch('https://api.tavily.com/search', {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${process.env.TAVILY_API_KEY!}` },
@@ -118,12 +122,12 @@ async function viaTavily(query: string, limit: number): Promise<SearchHit[]> {
   if (!res.ok) throw new Error(`Tavily ${res.status}: ${await res.text()}`);
   const json = (await res.json()) as { results?: { url: string; title?: string; content?: string }[] };
   return (json.results ?? []).flatMap((r) => {
-    const domain = hostOf(r.url);
-    return domain ? [{ domain, name: r.title ?? null, snippet: r.content?.slice(0, 300) ?? null, verified: true }] : [];
+    const domain = hostOf(r.url, allowAll);
+    return domain ? [{ url: r.url, domain, name: r.title ?? null, snippet: r.content?.slice(0, 300) ?? null, verified: true }] : [];
   });
 }
 
-async function viaBrave(query: string, limit: number): Promise<SearchHit[]> {
+async function viaBrave(query: string, limit: number, allowAll = false): Promise<SearchHit[]> {
   const url = new URL('https://api.search.brave.com/res/v1/web/search');
   url.searchParams.set('q', query);
   url.searchParams.set('count', String(Math.min(limit, 20)));
@@ -134,8 +138,8 @@ async function viaBrave(query: string, limit: number): Promise<SearchHit[]> {
   if (!res.ok) throw new Error(`Brave ${res.status}: ${await res.text()}`);
   const json = (await res.json()) as { web?: { results?: { url: string; title?: string; description?: string }[] } };
   return (json.web?.results ?? []).flatMap((r) => {
-    const domain = hostOf(r.url);
-    return domain ? [{ domain, name: r.title ? decode(r.title) : null, snippet: r.description ? decode(r.description) : null, verified: true }] : [];
+    const domain = hostOf(r.url, allowAll);
+    return domain ? [{ url: r.url, domain, name: r.title ? decode(r.title) : null, snippet: r.description ? decode(r.description) : null, verified: true }] : [];
   });
 }
 
@@ -148,7 +152,7 @@ async function viaBrave(query: string, limit: number): Promise<SearchHit[]> {
  * Then set SEARXNG_URL=http://localhost:8080. JSON output is off by default,
  * which is why the env var above is not optional.
  */
-async function viaSearxng(query: string, limit: number): Promise<SearchHit[]> {
+async function viaSearxng(query: string, limit: number, allowAll = false): Promise<SearchHit[]> {
   const base = process.env.SEARXNG_URL!.replace(/\/+$/, '');
   const url = new URL(`${base}/search`);
   url.searchParams.set('q', query);
@@ -160,25 +164,30 @@ async function viaSearxng(query: string, limit: number): Promise<SearchHit[]> {
 
   const json = (await res.json()) as { results?: { url: string; title?: string; content?: string }[] };
   return (json.results ?? []).slice(0, limit * 2).flatMap((r) => {
-    const domain = hostOf(r.url);
-    return domain ? [{ domain, name: r.title ?? null, snippet: r.content?.slice(0, 300) ?? null, verified: true }] : [];
+    const domain = hostOf(r.url, allowAll);
+    return domain ? [{ url: r.url, domain, name: r.title ?? null, snippet: r.content?.slice(0, 300) ?? null, verified: true }] : [];
   });
 }
 
 /* ------------------------------------------------------------------ api */
 
-export async function searchWeb(query: string, limit = 12, exclude?: string): Promise<SearchHit[]> {
+export async function searchWeb(
+  query: string,
+  limit = 12,
+  exclude?: string,
+  opts?: { allowAll?: boolean },
+): Promise<SearchHit[]> {
   const provider = activeProvider();
   try {
     switch (provider) {
       case 'exa':
-        return dedupe(await viaExa(query, limit), limit, exclude);
+        return dedupe(await viaExa(query, limit, opts?.allowAll), limit, exclude, opts?.allowAll);
       case 'tavily':
-        return dedupe(await viaTavily(query, limit), limit, exclude);
+        return dedupe(await viaTavily(query, limit, opts?.allowAll), limit, exclude, opts?.allowAll);
       case 'brave':
-        return dedupe(await viaBrave(query, limit), limit, exclude);
+        return dedupe(await viaBrave(query, limit, opts?.allowAll), limit, exclude, opts?.allowAll);
       case 'searxng':
-        return dedupe(await viaSearxng(query, limit), limit, exclude);
+        return dedupe(await viaSearxng(query, limit, opts?.allowAll), limit, exclude, opts?.allowAll);
       default:
         return [];
     }

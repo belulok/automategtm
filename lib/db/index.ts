@@ -73,6 +73,16 @@ export function ensureSchema(): Promise<void> {
       ADD COLUMN IF NOT EXISTS is_university BOOLEAN,
       ADD COLUMN IF NOT EXISTS country TEXT,
       ADD COLUMN IF NOT EXISTS favicon_url TEXT`;
+    await sql`CREATE TABLE IF NOT EXISTS people (
+      id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id),
+      campaign_id TEXT NOT NULL REFERENCES campaigns(id),
+      name TEXT NOT NULL, title TEXT NOT NULL,
+      company_domain TEXT NOT NULL, company_name TEXT, linkedin_url TEXT)`;
+    await sql`CREATE TABLE IF NOT EXISTS emails (
+      id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id),
+      campaign_id TEXT NOT NULL REFERENCES campaigns(id),
+      to_name TEXT NOT NULL, to_title TEXT NOT NULL, to_company TEXT NOT NULL,
+      subject TEXT NOT NULL, body TEXT NOT NULL)`;
     await sql`CREATE INDEX IF NOT EXISTS idx_campaigns_run ON campaigns(run_id)`;
     await sql`CREATE INDEX IF NOT EXISTS idx_companies_campaign ON companies(campaign_id)`;
   })();

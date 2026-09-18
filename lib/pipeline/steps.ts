@@ -125,8 +125,12 @@ export async function defineCampaigns(
     schema: SegmentNamesSchema,
     prompt:
       `Split the addressable market into 4 to 6 distinct buyer segments.\n\n${context}\n\n` +
+      `"name" must be a PLURAL NOUN PHRASE naming the kind of ORGANISATION that buys, ` +
+      `in 2-4 words. Good: "University Career Centers", "Dental Clinics", ` +
+      `"Boutique Law Firms", "Coding Bootcamps". Bad: a sentence, a first-person ` +
+      `quote, anything starting with "I" or "My", or a job title.\n` +
       `Each segment must buy for a DIFFERENT reason, not the same buyer sliced by ` +
-      `size or geography. Name each as that buyer would describe themselves.`,
+      `size or geography.`,
     maxOutputTokens: 8_000,
     timeoutMs: 120_000,
   });
@@ -202,11 +206,178 @@ export async function findCompanies(
   });
 
   const byDomain = new Map(object.scores.map((s) => [s.domain, s]));
-  return hits
+  const scored = hits
     .map((h) => {
       const s = byDomain.get(h.domain);
       const fit = Math.max(0, Math.min(5, Math.round(s?.fit ?? 0)));
-      return { ...h, fit, reason: s?.reason ?? 'not scored' };
+      return { ...h, name: cleanName(h.name, h.domain), fit, reason: s?.reason ?? 'not scored' };
     })
     .sort((a, b) => b.fit - a.fit);
+
+  // Free enrichment on the shortlist only. A domain with no MX records can never
+  // receive outreach, so this is the cheapest possible disqualifier — it runs
+  // before anyone pays a per-lead price to find an address.
+  const enriched = await enrichAll(scored.slice(0, 10).map((c) => c.domain));
+  return scored.map((c) => ({ ...c, enrichment: enriched.get(c.domain) }));
+}
+
+/**
+ * Search results carry page titles, not company names — "Step-by-Step Guide to
+ * Starting Your Private Practice | ALLYSSA POWERS" is a blog post. Take the
+ * shortest sensible segment, and fall back to the domain when nothing looks
+ * like a name, because this string ends up in the email.
+ */
+function cleanName(raw: string | null, domain: string): string {
+  const fallback = domain.replace(/^www\./, '').split('.')[0].replace(/[-_]/g, ' ');
+  const titled = fallback.charAt(0).toUpperCase() + fallback.slice(1);
+  if (!raw) return titled;
+
+  const parts = raw
+    .split(/[|\u2013\u2014\u00b7]|\s-\s/)
+    .map((x) => x.trim())
+    .filter((x) => x.length > 1 && x.length <= 40);
+  if (parts.length === 0) return titled;
+
+  // Prefer a part with no sentence-like punctuation and few words.
+  const best = parts
+    .filter((x) => !/[.?!:,]/.test(x) && x.split(/\s+/).length <= 5)
+    .sort((a, b) => a.length - b.length)[0];
+  return best ?? titled;
+}
+
+/* ---------------------------------------------------------------- step 5 */
+
+const PeopleSchema = z.object({
+  people: z.array(
+    z.object({
+      name: z.string().describe('Full name of the person.'),
+      title: z.string().describe('Their job title.'),
+      companyDomain: z.string().describe('Domain of the company they work at.'),
+      linkedinUrl: z.string().describe('LinkedIn profile URL, or empty string if none.'),
+    }),
+  ),
+});
+
+export type DecisionMaker = {
+  name: string;
+  title: string;
+  companyDomain: string;
+  companyName: string | null;
+  linkedinUrl: string | null;
+};
+
+/**
+ * Decision makers, without a people-data provider.
+ *
+ * Explee queries a 536M-profile graph here. With only web search available we
+ * search public LinkedIn profiles per company and let the model read the
+ * results. Lower yield and no verified emails — an honest approximation, not
+ * a replacement. A People Data Labs or Coresignal key would slot in here.
+ */
+export async function findDecisionMakers(
+  campaign: { name: string; targetRole?: string },
+  companies: ScoredCompany[],
+  limit = 12,
+): Promise<DecisionMaker[]> {
+  if (!hasSearch() || companies.length === 0) return [];
+
+  // Only companies that actually fit and can receive mail are worth the lookup.
+  const shortlist = companies
+    .filter((c) => c.fit >= 3 && c.enrichment?.acceptsMail !== false)
+    .slice(0, 6);
+  if (shortlist.length === 0) return [];
+
+  const batches = await Promise.all(
+    shortlist.map((c) =>
+      searchWeb(
+        `site:linkedin.com/in "${c.name ?? c.domain}" ${campaign.targetRole ?? 'director OR manager OR head'}`,
+        5,
+        undefined,
+        // linkedin.com is in the company blocklist, and every hit shares that one
+        // host, so people search needs both guards off.
+        { allowAll: true },
+      ).catch(() => []),
+    ),
+  );
+
+  // Keep only genuine individual profiles.
+  const raw = batches.flat().filter((h) => /linkedin\.com\/in\//i.test(h.url ?? ''));
+  if (raw.length === 0) return [];
+
+  const out = await generate({
+    schema: PeopleSchema,
+    prompt:
+      `Extract real people from these search results. Only include a person when ` +
+      `the result clearly names an individual and their role.\n\n` +
+      `Buyer segment: ${campaign.name}\n` +
+      `Target companies: ${shortlist.map((c) => `${c.name ?? c.domain} (${c.domain})`).join(', ')}\n\n` +
+      `Results:\n` +
+      raw.map((h) => `- ${h.url} | ${h.name ?? ''} | ${h.snippet ?? ''}`).join('\n') +
+      `\n\ncompanyDomain MUST be one of the target company domains listed above. ` +
+      `Drop any profile whose employer is not one of them. Skip company pages, ` +
+      `job postings and directory listings. Copy linkedinUrl verbatim from the result.`,
+    maxOutputTokens: 6_000,
+    timeoutMs: 90_000,
+  });
+
+  const byDomain = new Map(shortlist.map((c) => [c.domain, c.name]));
+  return out.people
+    .filter((p) => byDomain.has(p.companyDomain))
+    .slice(0, limit)
+    .map((p) => ({
+      ...p,
+      companyName: byDomain.get(p.companyDomain) ?? null,
+      linkedinUrl: p.linkedinUrl || null,
+    }));
+}
+
+/* ---------------------------------------------------------------- step 6 */
+
+const EmailSchema = z.object({
+  subject: z.string().describe('Email subject line.'),
+  body: z.string().describe('Email body, plain text, with line breaks.'),
+});
+
+export type DraftedEmail = {
+  subject: string;
+  body: string;
+  toName: string;
+  toTitle: string;
+  toCompany: string;
+};
+
+/** Write the first touch for one lead, grounded in what step 4 found. */
+export async function writeEmail(
+  profile: ProfileOut,
+  campaign: { name: string; pitch: string; pain: string },
+  lead: DecisionMaker,
+  company: ScoredCompany | undefined,
+  senderName: string,
+): Promise<DraftedEmail> {
+  const out = await generate({
+    schema: EmailSchema,
+    prompt:
+      `Write a first cold email. Short, specific, no hype.\n\n` +
+      `FROM: ${senderName} — ${profile.product}. ${profile.description}\n` +
+      `TO: ${lead.name}, ${lead.title} at ${lead.companyName ?? lead.companyDomain}\n` +
+      `What we know about them: ${company?.snippet ?? 'nothing beyond their website'}\n` +
+      `Segment: ${campaign.name} — ${campaign.pitch}\n` +
+      `Their likely problem: ${campaign.pain}\n\n` +
+      `Rules:\n` +
+      `- Open with one concrete, verifiable observation about THEIR organisation. ` +
+      `Never open with "I hope this finds you well" or anything about us.\n` +
+      `- Four short paragraphs maximum. Under 120 words.\n` +
+      `- One question at the end, answerable in a single line.\n` +
+      `- Sign off with the sender name exactly as given: "${senderName}". ` +
+      `Do not invent a person, a title or a company suffix.\n` +
+      `- No exclamation marks, no "revolutionary", no "game-changing".`,
+    maxOutputTokens: 4_000,
+    timeoutMs: 90_000,
+  });
+  return {
+    ...out,
+    toName: lead.name,
+    toTitle: lead.title,
+    toCompany: lead.companyName ?? lead.companyDomain,
+  };
 }
