@@ -6,8 +6,8 @@ import { CompetitorsSkeleton, CampaignsSkeleton, TableSkeleton, EmailSkeleton } 
 type Profile = { name: string; description: string; product: string; bullets: string[]; queries: string[] };
 type Hit = { domain: string; name: string | null; snippet: string | null; verified: boolean };
 type Enrichment = {
-  live: boolean; acceptsMail: boolean; mailProvider: string | null;
-  disposable: boolean; isUniversity: boolean; country: string | null; faviconUrl: string;
+  live: boolean | null; acceptsMail: boolean | null; mailProvider: string | null;
+  isUniversity: boolean; country: string | null; faviconUrl: string;
 };
 type Scored = Hit & { fit: number; reason: string; enrichment?: Enrichment };
 type Campaign = {
@@ -102,7 +102,10 @@ export function Pipeline({ domain, onReset }: { domain: string; onReset: () => v
       />
 
       <main className="min-w-0 flex-1 p-6 lg:p-10">
-        <Stepper steps={STEPS} done={done} active={active} />
+        <div className="mb-8 flex flex-wrap items-start justify-between gap-6">
+          <Stepper steps={STEPS} done={done} active={active} />
+          <WhatHappensNext ready={done.has(6)} />
+        </div>
 
         {error && (
           <div className="rounded-xl border border-red-300 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
@@ -157,7 +160,7 @@ export function Pipeline({ domain, onReset }: { domain: string; onReset: () => v
 
 function Stepper({ steps, done, active }: { steps: string[]; done: Set<number>; active: number }) {
   return (
-    <ol className="mb-8 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
+    <ol className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
       {steps.map((label, i) => {
         const n = i + 1;
         const state = done.has(n) ? 'done' : active === n ? 'active' : 'idle';
@@ -179,6 +182,42 @@ function Stepper({ steps, done, active }: { steps: string[]; done: Set<number>; 
         );
       })}
     </ol>
+  );
+}
+
+/** The three stages this tool stops before: sending, booking, optimising. */
+function WhatHappensNext({ ready }: { ready: boolean }) {
+  const next = ['Send emails', 'Book meetings', 'Learn & double down'];
+  return (
+    <div className="shrink-0">
+      <p className="mb-2 text-right text-[10px] uppercase tracking-wider text-neutral-400">
+        What happens next
+      </p>
+      <ol className="flex items-center gap-3">
+        {next.map((label, i) => (
+          <li key={label} className="flex items-center gap-2">
+            {i > 0 && <span className="text-neutral-300 dark:text-neutral-700">—</span>}
+            <span
+              className={`flex size-6 items-center justify-center rounded-full border border-dashed text-xs ${
+                ready
+                  ? 'border-neutral-400 text-neutral-500'
+                  : 'border-neutral-300 text-neutral-300 dark:border-neutral-700 dark:text-neutral-700'
+              }`}
+            >
+              {i + 7}
+            </span>
+            <span className={`text-sm ${ready ? 'text-neutral-500' : 'text-neutral-400 dark:text-neutral-600'}`}>
+              {label}
+            </span>
+          </li>
+        ))}
+      </ol>
+      {ready && (
+        <p className="mt-2 text-right text-xs text-neutral-400">
+          not built — sending needs pre-warmed inboxes
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -309,10 +348,15 @@ function Companies({ rows, provider }: { rows: Scored[]; provider: string }) {
           </Td>
           <Td muted>{r.reason}</Td>
           <Td>
-            {r.enrichment === undefined ? <span className="text-neutral-400">—</span>
-              : r.enrichment.acceptsMail
-                ? <span className="text-xs text-emerald-600 dark:text-emerald-400">✓ {r.enrichment.mailProvider ?? 'mail ok'}</span>
-                : <span className="text-xs text-red-500">no MX — unreachable</span>}
+            {r.enrichment?.acceptsMail === true ? (
+              <span className="text-xs text-emerald-600 dark:text-emerald-400">
+                ✓ {r.enrichment.mailProvider ?? 'mail ok'}
+              </span>
+            ) : r.enrichment?.acceptsMail === false ? (
+              <span className="text-xs text-red-500">no MX</span>
+            ) : (
+              <span className="text-xs text-neutral-400">unknown</span>
+            )}
           </Td>
           <Td right>
             <span className={`font-mono ${r.fit >= 4 ? 'text-emerald-600 dark:text-emerald-400' : r.fit <= 2 ? 'text-neutral-400' : ''}`}>{r.fit}/5</span>

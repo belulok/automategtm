@@ -73,62 +73,65 @@ export async function POST(req: Request) {
         send({ type: 'campaigns', data: saved });
         send({ type: 'step', step: 3, status: 'done' });
 
-        /* step 4 ------------------------------------------------------- */
+        /* steps 4-6 ---------------------------------------------------- */
+        // Campaigns are independent, so they run concurrently and each one
+        // streams as soon as it lands. Sequentially this took long enough that
+        // the last two steps looked stuck.
         send({ type: 'step', step: 4, status: 'start' });
         const foundByCampaign = new Map<string, ScoredCompany[]>();
-        for (const c of saved) {
-          const found = await findCompanies(c);
-          foundByCampaign.set(c.id, found);
-          for (const f of found) {
-            await db?.insert(companies).values({
-                id: randomUUID(),
-                runId,
-                campaignId: c.id,
-                name: f.name ?? f.domain,
-                domain: f.domain,
-                description: f.snippet,
-                fitScore: f.fit,
-              fitReason: f.reason,
-              acceptsMail: f.enrichment?.acceptsMail ?? null,
-              mailProvider: f.enrichment?.mailProvider ?? null,
-              isUniversity: f.enrichment?.isUniversity ?? null,
-              country: f.enrichment?.country ?? null,
-              faviconUrl: f.enrichment?.faviconUrl ?? null,
-            });
-          }
-          send({ type: 'companies', campaignId: c.id, data: found });
-        }
+        await Promise.all(
+          saved.map(async (c) => {
+            const found = await findCompanies(c).catch(() => []);
+            foundByCampaign.set(c.id, found);
+            for (const f of found) {
+              await db?.insert(companies).values({
+                id: randomUUID(), runId, campaignId: c.id,
+                name: f.name ?? f.domain, domain: f.domain, description: f.snippet,
+                fitScore: f.fit, fitReason: f.reason,
+                acceptsMail: f.enrichment?.acceptsMail ?? null,
+                mailProvider: f.enrichment?.mailProvider ?? null,
+                isUniversity: f.enrichment?.isUniversity ?? null,
+                country: f.enrichment?.country ?? null,
+                faviconUrl: f.enrichment?.faviconUrl ?? null,
+              });
+            }
+            send({ type: 'companies', campaignId: c.id, data: found });
+          }),
+        );
         send({ type: 'step', step: 4, status: 'done' });
 
-        /* step 5 ------------------------------------------------------- */
         send({ type: 'step', step: 5, status: 'start' });
         const leadsByCampaign = new Map<string, Awaited<ReturnType<typeof findDecisionMakers>>>();
-        for (const c of saved) {
-          const found = foundByCampaign.get(c.id) ?? [];
-          const leads = await findDecisionMakers({ name: c.name }, found);
-          leadsByCampaign.set(c.id, leads);
-          for (const l of leads) {
-            await db?.insert(people).values({ id: randomUUID(), runId, campaignId: c.id, ...l });
-          }
-          send({ type: 'people', campaignId: c.id, data: leads });
-        }
+        await Promise.all(
+          saved.map(async (c) => {
+            const leads = await findDecisionMakers(
+              { name: c.name },
+              foundByCampaign.get(c.id) ?? [],
+            ).catch(() => []);
+            leadsByCampaign.set(c.id, leads);
+            for (const l of leads) {
+              await db?.insert(people).values({ id: randomUUID(), runId, campaignId: c.id, ...l });
+            }
+            send({ type: 'people', campaignId: c.id, data: leads });
+          }),
+        );
         send({ type: 'step', step: 5, status: 'done' });
 
-        /* step 6 ------------------------------------------------------- */
         send({ type: 'step', step: 6, status: 'start' });
-        for (const c of saved) {
-          const leads = leadsByCampaign.get(c.id) ?? [];
-          const lead = leads[0];
-          if (!lead) continue;
-          const company = (foundByCampaign.get(c.id) ?? []).find((x) => x.domain === lead.companyDomain);
-          try {
-            const email = await writeEmail(profile, c, lead, company, profile.name);
-            await db?.insert(emails).values({ id: randomUUID(), runId, campaignId: c.id, ...email });
-            send({ type: 'email', campaignId: c.id, data: email });
-          } catch {
-            // A failed draft should not fail the run.
-          }
-        }
+        await Promise.all(
+          saved.map(async (c) => {
+            const lead = (leadsByCampaign.get(c.id) ?? [])[0];
+            if (!lead) return;
+            const company = (foundByCampaign.get(c.id) ?? []).find((x) => x.domain === lead.companyDomain);
+            try {
+              const email = await writeEmail(profile, c, lead, company, profile.name);
+              await db?.insert(emails).values({ id: randomUUID(), runId, campaignId: c.id, ...email });
+              send({ type: 'email', campaignId: c.id, data: email });
+            } catch {
+              // A failed draft should not fail the run.
+            }
+          }),
+        );
         send({ type: 'step', step: 6, status: 'done' });
 
         await db?.update(runs).set({ status: 'done' }).where(eqRun(runId));
