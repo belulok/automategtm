@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import { db, runs, profiles, competitors, campaigns, companies } from '@/lib/db';
+import { getDb, ensureSchema, hasDb, runs, profiles, competitors, campaigns, companies } from '@/lib/db';
 import { crawl } from '@/lib/pipeline/crawl';
 import { buildProfile, findCompetitors, defineCampaigns, findCompanies } from '@/lib/pipeline/steps';
 import { activeProvider } from '@/lib/pipeline/search';
@@ -24,8 +24,10 @@ export async function POST(req: Request) {
         controller.enqueue(encoder.encode(JSON.stringify(event) + '\n'));
 
       try {
-        db.insert(runs).values({ id: runId, domain }).run();
-        send({ type: 'run', runId, provider: activeProvider() });
+        await ensureSchema();
+        const db = getDb();
+        await db?.insert(runs).values({ id: runId, domain });
+        send({ type: 'run', runId, provider: activeProvider(), persisted: hasDb() });
 
         /* step 1 ------------------------------------------------------- */
         send({ type: 'step', step: 1, status: 'start' });
@@ -34,17 +36,17 @@ export async function POST(req: Request) {
         send({ type: 'log', text: `read ${crawled.pages.map((p) => p.path).join(' and ')}…` });
         send({ type: 'log', text: 'extracting what you sell and to whom…' });
         const profile = await buildProfile(crawled);
-        db.insert(profiles).values({ runId, ...profile }).run();
+        await db?.insert(profiles).values({ runId, ...profile });
         send({ type: 'profile', data: profile });
         send({ type: 'step', step: 1, status: 'done' });
 
         /* step 2 ------------------------------------------------------- */
         send({ type: 'step', step: 2, status: 'start' });
-        const hits = await findCompetitors(profile);
+        const hits = await findCompetitors(profile, crawled.domain);
         for (const h of hits) {
-          db.insert(competitors)
-            .values({ id: randomUUID(), runId, domain: h.domain, name: h.name, note: h.snippet })
-            .run();
+          await db
+            ?.insert(competitors)
+            .values({ id: randomUUID(), runId, domain: h.domain, name: h.name, note: h.snippet });
         }
         send({ type: 'competitors', data: hits });
         send({ type: 'step', step: 2, status: 'done' });
@@ -54,8 +56,7 @@ export async function POST(req: Request) {
         const defined = await defineCampaigns(profile, hits);
         const saved = defined.map((c) => ({ ...c, id: randomUUID() }));
         for (const c of saved) {
-          db.insert(campaigns)
-            .values({
+          await db?.insert(campaigns).values({
               id: c.id,
               runId,
               name: c.name,
@@ -63,9 +64,8 @@ export async function POST(req: Request) {
               pain: c.pain,
               criteria: c.criteria,
               exampleClients: c.exampleClients,
-              searchQuery: c.searchQuery,
-            })
-            .run();
+            searchQuery: c.searchQuery,
+          });
         }
         send({ type: 'campaigns', data: saved });
         send({ type: 'step', step: 3, status: 'done' });
@@ -75,8 +75,7 @@ export async function POST(req: Request) {
         for (const c of saved) {
           const found = await findCompanies(c);
           for (const f of found) {
-            db.insert(companies)
-              .values({
+            await db?.insert(companies).values({
                 id: randomUUID(),
                 runId,
                 campaignId: c.id,
@@ -84,20 +83,19 @@ export async function POST(req: Request) {
                 domain: f.domain,
                 description: f.snippet,
                 fitScore: f.fit,
-                fitReason: f.reason,
-              })
-              .run();
+              fitReason: f.reason,
+            });
           }
           send({ type: 'companies', campaignId: c.id, data: found });
         }
         send({ type: 'step', step: 4, status: 'done' });
 
-        db.update(runs).set({ status: 'done' }).where(eqRun(runId)).run();
+        await db?.update(runs).set({ status: 'done' }).where(eqRun(runId));
         send({ type: 'done', runId });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         try {
-          db.update(runs).set({ status: 'error', error: message }).where(eqRun(runId)).run();
+          await getDb()?.update(runs).set({ status: 'error', error: message }).where(eqRun(runId));
         } catch {}
         send({ type: 'error', message });
       } finally {

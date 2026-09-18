@@ -53,9 +53,9 @@ const CompetitorGuessSchema = z.object({
     ,
 });
 
-export async function findCompetitors(profile: ProfileOut): Promise<SearchHit[]> {
+export async function findCompetitors(profile: ProfileOut, selfDomain?: string): Promise<SearchHit[]> {
   if (hasSearch()) {
-    const batches = await Promise.all(profile.queries.map((q) => searchWeb(q, 8)));
+    const batches = await Promise.all(profile.queries.map((q) => searchWeb(q, 8, selfDomain)));
     const seen = new Set<string>();
     return batches.flat().filter((h) => !seen.has(h.domain) && seen.add(h.domain));
   }
@@ -100,11 +100,11 @@ export async function defineCampaigns(profile: ProfileOut, competitors: SearchHi
       `Give each 2-4 qualifying criteria and 2-4 real example organisations.\n\n` +
       `Product: ${profile.product}\n${profile.description}\n` +
       `Distinctive: ${profile.bullets.join('; ')}\n` +
-      `Competitors: ${competitors.slice(0, 10).map((c) => c.domain).join(', ') || 'unknown'}\n\n` +
+      `Competitors: ${competitors.slice(0, 8).map((c) => c.domain).join(', ') || 'unknown'}\n\n` +
       `Each segment must be a group that buys for a DIFFERENT reason, not the same buyer ` +
       `sliced by size or geography. Name the segment as the buyer would describe themselves.`,
     maxOutputTokens: 24_000,
-    timeoutMs: 180_000,
+    timeoutMs: 240_000,
   });
   return object.campaigns.slice(0, 6).map((c) => ({
     ...c,

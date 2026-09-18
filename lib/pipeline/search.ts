@@ -32,11 +32,28 @@ export function activeProvider(): Provider {
 
 export const hasSearch = () => activeProvider() !== 'none';
 
+/**
+ * Search returns a lot of things that are not companies: social, encyclopedias,
+ * and especially B2B data aggregators, which rank well for exactly the queries
+ * this pipeline generates and are never the answer.
+ */
 const SKIP = new Set([
+  // search, social, reference
   'duckduckgo.com', 'google.com', 'bing.com', 'youtube.com', 'facebook.com',
   'twitter.com', 'x.com', 'linkedin.com', 'instagram.com', 'reddit.com',
   'wikipedia.org', 'medium.com', 'quora.com', 'pinterest.com', 'amazon.com',
+  'substack.com', 'mapquest.com', 'yelp.com',
+  // review sites and directories
   'g2.com', 'capterra.com', 'producthunt.com', 'trustpilot.com', 'github.com',
+  'getapp.com', 'softwareadvice.com', 'sourceforge.net', 'slashdot.org',
+  'featuredcustomers.com', 'crunchbase.com', 'tracxn.com', 'owler.com',
+  'similarweb.com', 'builtwith.com', 'clutch.co', 'gartner.com',
+  // B2B data aggregators — they rank for every ICP query and sell lists
+  'zoominfo.com', 'rocketreach.co', 'leadiq.com', 'apollo.io', 'lusha.com',
+  'seamless.ai', 'cognism.com', 'uplead.com', 'hunter.io', 'clearbit.com',
+  // docs and finance portals
+  'learn.microsoft.com', 'docs.microsoft.com', 'finance.yahoo.com',
+  'bloomberg.com', 'pitchbook.com', 'glassdoor.com', 'indeed.com',
 ]);
 
 function hostOf(url: string): string | null {
@@ -49,11 +66,14 @@ function hostOf(url: string): string | null {
   }
 }
 
-function dedupe(rows: SearchHit[], limit: number): SearchHit[] {
+function dedupe(rows: SearchHit[], limit: number, exclude?: string): SearchHit[] {
   const seen = new Set<string>();
+  const self = exclude?.replace(/^www\./, '').toLowerCase();
   const out: SearchHit[] = [];
   for (const r of rows) {
     if (seen.has(r.domain)) continue;
+    // Never return the company we are researching as its own competitor.
+    if (self && (r.domain === self || r.domain.endsWith(`.${self}`) || self.endsWith(`.${r.domain}`))) continue;
     seen.add(r.domain);
     out.push(r);
     if (out.length >= limit) break;
@@ -147,18 +167,18 @@ async function viaSearxng(query: string, limit: number): Promise<SearchHit[]> {
 
 /* ------------------------------------------------------------------ api */
 
-export async function searchWeb(query: string, limit = 12): Promise<SearchHit[]> {
+export async function searchWeb(query: string, limit = 12, exclude?: string): Promise<SearchHit[]> {
   const provider = activeProvider();
   try {
     switch (provider) {
       case 'exa':
-        return dedupe(await viaExa(query, limit), limit);
+        return dedupe(await viaExa(query, limit), limit, exclude);
       case 'tavily':
-        return dedupe(await viaTavily(query, limit), limit);
+        return dedupe(await viaTavily(query, limit), limit, exclude);
       case 'brave':
-        return dedupe(await viaBrave(query, limit), limit);
+        return dedupe(await viaBrave(query, limit), limit, exclude);
       case 'searxng':
-        return dedupe(await viaSearxng(query, limit), limit);
+        return dedupe(await viaSearxng(query, limit), limit, exclude);
       default:
         return [];
     }

@@ -1,41 +1,73 @@
-import Database from 'better-sqlite3';
-import { drizzle } from 'drizzle-orm/better-sqlite3';
+import postgres from 'postgres';
+import { drizzle } from 'drizzle-orm/postgres-js';
 import * as schema from './schema';
 
-const sqlite = new Database(process.env.DATABASE_URL ?? './auto-gtm.db');
-sqlite.pragma('journal_mode = WAL');
-
-// Created inline so the app runs with no migration step. Swap for
-// `drizzle-kit push` (and Neon/Postgres) when this needs to deploy.
-sqlite.exec(`
-CREATE TABLE IF NOT EXISTS runs (
-  id TEXT PRIMARY KEY, domain TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'running', error TEXT, created_at INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS profiles (
-  run_id TEXT PRIMARY KEY REFERENCES runs(id), name TEXT NOT NULL,
-  description TEXT NOT NULL, product TEXT NOT NULL,
-  bullets TEXT NOT NULL, queries TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS competitors (
-  id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id),
-  domain TEXT NOT NULL, name TEXT, note TEXT
-);
-CREATE TABLE IF NOT EXISTS campaigns (
-  id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id),
-  name TEXT NOT NULL, pitch TEXT NOT NULL, pain TEXT NOT NULL,
-  criteria TEXT NOT NULL, example_clients TEXT NOT NULL,
-  search_query TEXT NOT NULL, estimated_size INTEGER
-);
-CREATE TABLE IF NOT EXISTS companies (
-  id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id),
-  campaign_id TEXT NOT NULL REFERENCES campaigns(id),
-  name TEXT NOT NULL, domain TEXT NOT NULL, description TEXT,
-  location TEXT, fit_score INTEGER, fit_reason TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_campaigns_run ON campaigns(run_id);
-CREATE INDEX IF NOT EXISTS idx_companies_campaign ON companies(campaign_id);
-`);
-
-export const db = drizzle(sqlite, { schema });
 export * from './schema';
+
+/**
+ * Persistence is optional. Without DATABASE_URL the pipeline still runs and
+ * streams every result to the client, it just keeps no history.
+ *
+ * postgres-js speaks plain TCP, so the same code works against a Postgres on
+ * this box and against a hosted one (Neon, Supabase) via its connection string.
+ */
+export const hasDb = () => Boolean(process.env.DATABASE_URL);
+
+function create() {
+  const client = postgres(process.env.DATABASE_URL!, {
+    max: 5,
+    idle_timeout: 20,
+    // Local sockets are plaintext; hosted providers advertise sslmode in the URL.
+    ssl: process.env.DATABASE_URL!.includes('sslmode=require') ? 'require' : undefined,
+  });
+  return { db: drizzle(client, { schema }), client };
+}
+
+let cached: ReturnType<typeof create> | null = null;
+
+function conn() {
+  // Lazily, because Next evaluates module scope at build time and a missing
+  // URL would otherwise break `next build` before any database exists.
+  if (!hasDb()) return null;
+  cached ??= create();
+  return cached;
+}
+
+export function getDb() {
+  return conn()?.db ?? null;
+}
+
+let ensured: Promise<void> | null = null;
+
+/** Create tables on first use, so a fresh database needs no migration step. */
+export function ensureSchema(): Promise<void> {
+  const c = conn();
+  if (!c) return Promise.resolve();
+  ensured ??= (async () => {
+    const sql = c.client;
+    await sql`CREATE TABLE IF NOT EXISTS runs (
+      id TEXT PRIMARY KEY, domain TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'running', error TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now())`;
+    await sql`CREATE TABLE IF NOT EXISTS profiles (
+      run_id TEXT PRIMARY KEY REFERENCES runs(id), name TEXT NOT NULL,
+      description TEXT NOT NULL, product TEXT NOT NULL,
+      bullets JSONB NOT NULL, queries JSONB NOT NULL)`;
+    await sql`CREATE TABLE IF NOT EXISTS competitors (
+      id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id),
+      domain TEXT NOT NULL, name TEXT, note TEXT)`;
+    await sql`CREATE TABLE IF NOT EXISTS campaigns (
+      id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id),
+      name TEXT NOT NULL, pitch TEXT NOT NULL, pain TEXT NOT NULL,
+      criteria JSONB NOT NULL, example_clients JSONB NOT NULL,
+      search_query TEXT NOT NULL, estimated_size INTEGER)`;
+    await sql`CREATE TABLE IF NOT EXISTS companies (
+      id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id),
+      campaign_id TEXT NOT NULL REFERENCES campaigns(id),
+      name TEXT NOT NULL, domain TEXT NOT NULL, description TEXT,
+      location TEXT, fit_score INTEGER, fit_reason TEXT)`;
+    await sql`CREATE INDEX IF NOT EXISTS idx_campaigns_run ON campaigns(run_id)`;
+    await sql`CREATE INDEX IF NOT EXISTS idx_companies_campaign ON companies(campaign_id)`;
+  })();
+  return ensured;
+}
