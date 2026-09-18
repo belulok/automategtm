@@ -66,6 +66,13 @@ export function ensureSchema(): Promise<void> {
       campaign_id TEXT NOT NULL REFERENCES campaigns(id),
       name TEXT NOT NULL, domain TEXT NOT NULL, description TEXT,
       location TEXT, fit_score INTEGER, fit_reason TEXT)`;
+    // Added after first release; ADD COLUMN IF NOT EXISTS keeps this idempotent.
+    await sql`ALTER TABLE companies
+      ADD COLUMN IF NOT EXISTS accepts_mail BOOLEAN,
+      ADD COLUMN IF NOT EXISTS mail_provider TEXT,
+      ADD COLUMN IF NOT EXISTS is_university BOOLEAN,
+      ADD COLUMN IF NOT EXISTS country TEXT,
+      ADD COLUMN IF NOT EXISTS favicon_url TEXT`;
     await sql`CREATE INDEX IF NOT EXISTS idx_campaigns_run ON campaigns(run_id)`;
     await sql`CREATE INDEX IF NOT EXISTS idx_companies_campaign ON companies(campaign_id)`;
   })();

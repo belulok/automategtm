@@ -1,4 +1,4 @@
-import { pgTable, text, integer, timestamp, jsonb } from 'drizzle-orm/pg-core';
+import { pgTable, text, integer, timestamp, jsonb, boolean } from 'drizzle-orm/pg-core';
 
 /** One research run against one domain. */
 export const runs = pgTable('runs', {
@@ -52,6 +52,12 @@ export const companies = pgTable('companies', {
   location: text('location'),
   fitScore: integer('fit_score'),
   fitReason: text('fit_reason'),
+  // Free enrichment (see lib/pipeline/enrich.ts)
+  acceptsMail: boolean('accepts_mail'),
+  mailProvider: text('mail_provider'),
+  isUniversity: boolean('is_university'),
+  country: text('country'),
+  faviconUrl: text('favicon_url'),
 });
 
 export type Run = typeof runs.$inferSelect;

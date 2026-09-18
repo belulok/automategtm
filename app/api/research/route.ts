@@ -84,6 +84,11 @@ export async function POST(req: Request) {
                 description: f.snippet,
                 fitScore: f.fit,
               fitReason: f.reason,
+              acceptsMail: f.enrichment?.acceptsMail ?? null,
+              mailProvider: f.enrichment?.mailProvider ?? null,
+              isUniversity: f.enrichment?.isUniversity ?? null,
+              country: f.enrichment?.country ?? null,
+              faviconUrl: f.enrichment?.faviconUrl ?? null,
             });
           }
           send({ type: 'companies', campaignId: c.id, data: found });

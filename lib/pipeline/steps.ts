@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { generate } from '@/lib/ai';
 import type { Crawled } from './crawl';
 import { searchWeb, hasSearch, type SearchHit } from './search';
+import { enrichAll, type Enrichment } from './enrich';
 
 /* ---------------------------------------------------------------- step 1 */
 
@@ -78,39 +79,88 @@ export async function findCompetitors(profile: ProfileOut, selfDomain?: string):
 
 /* ---------------------------------------------------------------- step 3 */
 
-const CampaignsSchema = z.object({
-  campaigns: z
-    .array(
-      z.object({
-        name: z.string().describe('The buyer segment, e.g. "University Career Centers".'),
-        pitch: z.string().describe('One line on what you offer this segment.'),
-        pain: z.string().describe('The problem this segment has, in their words.'),
-        criteria: z.array(z.string()).describe('Signals that qualify an organisation.'),
-        exampleClients: z.array(z.string()).describe('Real, recognisable organisations that fit.'),
-        searchQuery: z.string().describe('A search query that would surface more like them.'),
-      }),
-    ),
+/**
+ * Two passes, deliberately.
+ *
+ * One call for six segments x six fields is ~24k tokens of reasoning plus JSON,
+ * and a small model truncates it often enough that the run fails outright. Naming
+ * the segments first, then filling each one in parallel, turns that into seven
+ * small calls that each fit comfortably — and it finishes sooner.
+ */
+const SegmentNamesSchema = z.object({
+  segments: z.array(
+    z.object({
+      name: z.string().describe('Buyer segment name.'),
+      pitch: z.string().describe('One line on what you offer them.'),
+    }),
+  ),
 });
 
-export async function defineCampaigns(profile: ProfileOut, competitors: SearchHit[]) {
-  const object = await generate({
-    schema: CampaignsSchema,
+const SegmentDetailSchema = z.object({
+  pain: z.string().describe('The problem this segment has.'),
+  criteria: z.array(z.string()).describe('Signals that qualify an organisation.'),
+  exampleClients: z.array(z.string()).describe('Real organisations that fit.'),
+  searchQuery: z.string().describe('Search query to find more like them.'),
+});
+
+export type CampaignOut = {
+  name: string;
+  pitch: string;
+  pain: string;
+  criteria: string[];
+  exampleClients: string[];
+  searchQuery: string;
+};
+
+export async function defineCampaigns(
+  profile: ProfileOut,
+  competitors: SearchHit[],
+): Promise<CampaignOut[]> {
+  const context =
+    `Product: ${profile.product}\n${profile.description}\n` +
+    `Distinctive: ${profile.bullets.join('; ')}\n` +
+    `Competitors: ${competitors.slice(0, 8).map((c) => c.domain).join(', ') || 'unknown'}`;
+
+  const named = await generate({
+    schema: SegmentNamesSchema,
     prompt:
-      `Split the addressable market into 4 to 6 distinct buyer segments.\n` +
-      `Give each 2-4 qualifying criteria and 2-4 real example organisations.\n\n` +
-      `Product: ${profile.product}\n${profile.description}\n` +
-      `Distinctive: ${profile.bullets.join('; ')}\n` +
-      `Competitors: ${competitors.slice(0, 8).map((c) => c.domain).join(', ') || 'unknown'}\n\n` +
-      `Each segment must be a group that buys for a DIFFERENT reason, not the same buyer ` +
-      `sliced by size or geography. Name the segment as the buyer would describe themselves.`,
-    maxOutputTokens: 24_000,
-    timeoutMs: 240_000,
+      `Split the addressable market into 4 to 6 distinct buyer segments.\n\n${context}\n\n` +
+      `Each segment must buy for a DIFFERENT reason, not the same buyer sliced by ` +
+      `size or geography. Name each as that buyer would describe themselves.`,
+    maxOutputTokens: 8_000,
+    timeoutMs: 120_000,
   });
-  return object.campaigns.slice(0, 6).map((c) => ({
-    ...c,
-    criteria: c.criteria.slice(0, 4),
-    exampleClients: c.exampleClients.slice(0, 4),
-  }));
+
+  const segments = named.segments.slice(0, 6);
+
+  const detailed = await Promise.all(
+    segments.map(async (seg) => {
+      try {
+        const d = await generate({
+          schema: SegmentDetailSchema,
+          prompt:
+            `Describe this buyer segment for the product below.\n\n${context}\n\n` +
+            `Segment: ${seg.name}\nWhat we offer them: ${seg.pitch}\n\n` +
+            `Give 2-4 qualifying criteria and 2-4 real, recognisable example ` +
+            `organisations that ARE this segment (not tools they use).`,
+          maxOutputTokens: 6_000,
+          timeoutMs: 120_000,
+        });
+        return {
+          ...seg,
+          pain: d.pain,
+          criteria: d.criteria.slice(0, 4),
+          exampleClients: d.exampleClients.slice(0, 4),
+          searchQuery: d.searchQuery,
+        };
+      } catch {
+        // One segment failing should not lose the other five.
+        return null;
+      }
+    }),
+  );
+
+  return detailed.filter((c): c is CampaignOut => c !== null);
 }
 
 /* ---------------------------------------------------------------- step 4 */
@@ -125,7 +175,7 @@ const ScoreSchema = z.object({
   ),
 });
 
-export type ScoredCompany = SearchHit & { fit: number; reason: string };
+export type ScoredCompany = SearchHit & { fit: number; reason: string; enrichment?: Enrichment };
 
 /**
  * Find companies for a campaign and score each against that campaign's own

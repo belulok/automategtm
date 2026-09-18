@@ -8,7 +8,11 @@ type Campaign = {
   id: string; name: string; pitch: string; pain: string;
   criteria: string[]; exampleClients: string[]; searchQuery: string;
 };
-type Scored = Hit & { fit: number; reason: string };
+type Enrichment = {
+  live: boolean; acceptsMail: boolean; mailProvider: string | null;
+  disposable: boolean; isUniversity: boolean; country: string | null; faviconUrl: string;
+};
+type Scored = Hit & { fit: number; reason: string; enrichment?: Enrichment };
 
 const STEPS = ['Research your company', 'Explore competitors', 'Define campaigns', 'Find potential customers'];
 
@@ -234,6 +238,7 @@ function Results({ rows, provider, pending }: { rows?: Scored[]; provider: strin
         <tr>
           <th className="border-b border-neutral-200 pb-2 dark:border-neutral-800">Company</th>
           <th className="border-b border-neutral-200 pb-2 dark:border-neutral-800">Why</th>
+          <th className="border-b border-neutral-200 pb-2 dark:border-neutral-800">Reachable</th>
           <th className="border-b border-neutral-200 pb-2 text-right dark:border-neutral-800">Fit</th>
         </tr>
       </thead>
@@ -241,11 +246,32 @@ function Results({ rows, provider, pending }: { rows?: Scored[]; provider: strin
         {rows.map((r) => (
           <tr key={r.domain}>
             <td className="border-b border-neutral-100 py-2.5 pr-4 align-top dark:border-neutral-900">
-              <span className="font-medium">{r.name ?? r.domain}</span>
-              <span className="block font-mono text-xs text-neutral-500">{r.domain}</span>
+              <span className="flex items-center gap-2">
+                {r.enrichment?.faviconUrl && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={r.enrichment.faviconUrl} alt="" width={16} height={16} className="size-4 shrink-0 rounded-sm" />
+                )}
+                <span className="font-medium">{r.name ?? r.domain}</span>
+              </span>
+              <span className="block font-mono text-xs text-neutral-500">
+                {r.domain}
+                {r.enrichment?.isUniversity && <span className="ml-1 text-emerald-600 dark:text-emerald-400">· university</span>}
+                {r.enrichment?.country && <span className="ml-1">· {r.enrichment.country}</span>}
+              </span>
             </td>
             <td className="border-b border-neutral-100 py-2.5 pr-4 align-top text-neutral-600 dark:border-neutral-900 dark:text-neutral-400">
               {r.reason}
+            </td>
+            <td className="border-b border-neutral-100 py-2.5 pr-4 align-top text-xs dark:border-neutral-900">
+              {r.enrichment === undefined ? (
+                <span className="text-neutral-400">—</span>
+              ) : r.enrichment.acceptsMail ? (
+                <span className="text-emerald-600 dark:text-emerald-400">
+                  ✓ {r.enrichment.mailProvider ?? 'mail ok'}
+                </span>
+              ) : (
+                <span className="text-red-500">no MX — unreachable</span>
+              )}
             </td>
             <td className="border-b border-neutral-100 py-2.5 text-right align-top font-mono dark:border-neutral-900">
               <span className={r.fit >= 4 ? 'text-emerald-600 dark:text-emerald-400' : r.fit <= 2 ? 'text-neutral-400' : ''}>
