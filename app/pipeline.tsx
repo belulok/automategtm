@@ -101,7 +101,8 @@ export function Pipeline({ start, onReset }: { start: Start; onReset: () => void
     <div className="flex min-h-dvh flex-col lg:flex-row">
       <Sidebar
         domain={domain} label={label} onReset={onReset} profile={profile} logs={logs}
-        comps={comps} camps={camps} found={found} done={done} provider={provider}
+        comps={comps} camps={camps} found={found} leads={leads} mails={mails}
+        done={done} active={active} provider={provider}
         selected={selected} onSelect={setSelected}
       />
 
@@ -461,9 +462,15 @@ function Logs({ logs }: { logs: string[] }) {
 function Sidebar(props: {
   domain: string | null; label: string; onReset: () => void; profile: Profile | null; logs: string[];
   comps: Hit[] | null; camps: Campaign[] | null; found: Record<string, Scored[]>;
-  done: Set<number>; provider: string; selected: string | null; onSelect: (id: string) => void;
+  leads: Record<string, Person[]>; mails: Record<string, Email>;
+  done: Set<number>; active: number; provider: string;
+  selected: string | null; onSelect: (id: string) => void;
 }) {
-  const { domain, label, onReset, profile, logs, comps, camps, found, done, selected, onSelect } = props;
+  const { domain, label, onReset, profile, logs, comps, camps, found, leads, mails, done, active, selected, onSelect } = props;
+  const companyCount = Object.values(found).flat().length;
+  const peopleCount = Object.values(leads).flat().length;
+  const emailCount = Object.keys(mails).length;
+  const maxCount = Math.max(1, ...Object.values(found).map((f) => f.length));
   return (
     <aside className="shrink-0 border-b border-neutral-200 p-5 lg:w-80 lg:border-b-0 lg:border-r dark:border-neutral-800">
       <button onClick={onReset} className="mb-6 text-sm text-neutral-500 transition hover:text-neutral-900 dark:hover:text-neutral-100">
@@ -492,11 +499,21 @@ function Sidebar(props: {
         <Section label={`step 2 · competitors ${comps.length}`} done={done.has(2)}>
           <div className="grid grid-cols-2 gap-1.5">
             {comps.slice(0, 8).map((c) => (
-              <span key={c.domain} className="flex items-center gap-1.5 truncate rounded-md border border-neutral-200 px-2 py-1.5 font-mono text-[11px] dark:border-neutral-800">
+              <a
+                key={c.domain}
+                href={`https://${c.domain}`}
+                target="_blank"
+                rel="noreferrer noopener"
+                className="flex items-center gap-1.5 rounded-md border border-neutral-200 px-2 py-1.5 font-mono text-[11px] transition hover:border-neutral-400 dark:border-neutral-800 dark:hover:border-neutral-600"
+              >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={favicon(c.domain)} alt="" width={12} height={12} className="size-3 shrink-0 rounded-sm" />
-                <span className="truncate">{c.domain}</span>
-              </span>
+                <span className="min-w-0 flex-1 truncate">{c.domain}</span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                  aria-hidden className="size-2.5 shrink-0 text-neutral-400">
+                  <path d="M7 17 17 7M9 7h8v8" />
+                </svg>
+              </a>
             ))}
           </div>
           {comps.length > 8 && <p className="mt-2 text-xs text-neutral-500">+{comps.length - 8} more</p>}
@@ -506,24 +523,86 @@ function Sidebar(props: {
       {camps && (
         <Section label={`step 3 · campaigns ${camps.length}`} done={done.has(3)}>
           <div className="space-y-1">
-            {camps.map((c) => (
-              <button
-                key={c.id}
-                onClick={() => onSelect(c.id)}
-                className={`flex w-full items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm transition ${
-                  selected === c.id
-                    ? 'border-neutral-900 dark:border-neutral-100'
-                    : 'border-transparent hover:border-neutral-300 dark:hover:border-neutral-700'
-                }`}
-              >
-                <span className="truncate">{c.name}</span>
-                <span className="shrink-0 font-mono text-xs text-neutral-500">{found[c.id]?.length ?? '·'}</span>
-              </button>
-            ))}
+            {camps.map((c, i) => {
+              const n = found[c.id]?.length;
+              return (
+                <button
+                  key={c.id}
+                  onClick={() => onSelect(c.id)}
+                  className={`w-full rounded-lg border px-3 py-2 text-left transition ${
+                    selected === c.id
+                      ? 'border-neutral-900 dark:border-neutral-100'
+                      : 'border-transparent hover:border-neutral-300 dark:hover:border-neutral-700'
+                  }`}
+                >
+                  <span className="flex items-center gap-2 text-sm">
+                    <CampaignIcon i={i} />
+                    <span className="min-w-0 flex-1 truncate">{c.name}</span>
+                    {selected === c.id && <span className="shrink-0 text-xs text-emerald-500">✓</span>}
+                    <span className="shrink-0 font-mono text-xs text-neutral-500">{n === undefined ? '·' : compact(n)}</span>
+                  </span>
+                  {/* how much of this run's total each segment accounts for */}
+                  <span className="mt-1.5 block h-0.5 w-full rounded bg-neutral-200 dark:bg-neutral-800">
+                    <span
+                      className="block h-0.5 rounded bg-neutral-500 transition-[width] duration-500 dark:bg-neutral-400"
+                      style={{ width: `${Math.round(((n ?? 0) / maxCount) * 100)}%` }}
+                    />
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </Section>
       )}
+
+      {(done.has(4) || active >= 4) && (
+        <Section label="step 4 · find potential customers" done={done.has(4)}>
+          <p className="text-sm text-neutral-600 dark:text-neutral-400">
+            {companyCount > 0 ? `${companyCount} companies scored` : 'searching…'}
+          </p>
+        </Section>
+      )}
+
+      {(done.has(5) || active >= 5) && (
+        <Section label="step 5 · find decision makers" done={done.has(5)}>
+          <p className="text-sm text-neutral-600 dark:text-neutral-400">
+            {done.has(5) ? `${peopleCount} people found` : 'searching…'}
+          </p>
+        </Section>
+      )}
+
+      {(done.has(6) || active >= 6) && (
+        <Section label="step 6 · write emails" done={done.has(6)}>
+          <p className="text-sm text-neutral-600 dark:text-neutral-400">
+            {done.has(6) ? `${emailCount} drafted` : 'drafting…'}
+          </p>
+        </Section>
+      )}
     </aside>
+  );
+}
+
+/** 1800 -> 1.8K, so long segment lists stay scannable. */
+function compact(n: number): string {
+  return n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n);
+}
+
+const ICON_PATHS = [
+  'M12 3 2 8l10 5 10-5-10-5Zm0 12v6M6 10.5V15c0 1.7 2.7 3 6 3s6-1.3 6-3v-4.5', // education
+  'M5 19 3 21m6-5-2 2m10-14a6 6 0 0 1-7 9l-2 2-3-3 2-2a6 6 0 0 1 9-7l3 3Z',    // rocket
+  'M3 8h18v12H3V8Zm5 0V6a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2',                      // briefcase
+  'M16 20v-2a4 4 0 0 0-8 0v2M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z',               // people
+  'M20 9c0 5-8 10-8 10S4 14 4 9a4 4 0 0 1 8-1 4 4 0 0 1 8 1Z',                  // heart
+  'M4 5h7v15H4V5Zm9 0h7v15h-7V5Z',                                              // book
+];
+
+function CampaignIcon({ i }: { i: number }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"
+      strokeLinecap="round" strokeLinejoin="round" aria-hidden
+      className="size-4 shrink-0 text-neutral-400">
+      <path d={ICON_PATHS[i % ICON_PATHS.length]} />
+    </svg>
   );
 }
 
