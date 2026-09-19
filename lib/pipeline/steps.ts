@@ -3,6 +3,7 @@ import { generate } from '@/lib/ai';
 import type { Crawled } from './crawl';
 import { searchWeb, hasSearch, type SearchHit } from './search';
 import { enrichAll, type Enrichment } from './enrich';
+import { findEmail, type FoundEmail } from './email-finder';
 
 /* ---------------------------------------------------------------- step 1 */
 
@@ -331,6 +332,8 @@ export type DecisionMaker = {
   companyDomain: string;
   companyName: string | null;
   linkedinUrl: string | null;
+  /** Result of the finder waterfall, so the UI can show which provider hit. */
+  found?: FoundEmail;
 };
 
 /**
@@ -388,7 +391,9 @@ export async function findDecisionMakers(
   });
 
   const byDomain = new Map(shortlist.map((c) => [c.domain, c.name]));
-  return out.people
+  const byEnrichment = new Map(shortlist.map((c) => [c.domain, c.enrichment]));
+
+  const people = out.people
     .filter((p) => byDomain.has(p.companyDomain))
     .slice(0, limit)
     .map((p) => ({
@@ -396,6 +401,15 @@ export async function findDecisionMakers(
       companyName: byDomain.get(p.companyDomain) ?? null,
       linkedinUrl: p.linkedinUrl || null,
     }));
+
+  // Run the waterfall for each lead. With no provider keys this still returns a
+  // populated attempt list, so the UI shows the pipeline rather than a blank.
+  return Promise.all(
+    people.map(async (p) => ({
+      ...p,
+      found: await findEmail(p.name, p.companyDomain, byEnrichment.get(p.companyDomain)),
+    })),
+  );
 }
 
 /* ---------------------------------------------------------------- step 6 */

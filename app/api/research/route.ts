@@ -137,7 +137,8 @@ export async function POST(req: Request) {
             ).catch(() => []);
             leadsByCampaign.set(c.id, leads);
             for (const l of leads) {
-              await db?.insert(people).values({ id: randomUUID(), runId, campaignId: c.id, ...l });
+              const { found: _f, ...row } = l;
+              await db?.insert(people).values({ id: randomUUID(), runId, campaignId: c.id, ...row });
             }
             send({ type: 'people', campaignId: c.id, data: leads });
           }),
@@ -147,15 +148,18 @@ export async function POST(req: Request) {
         send({ type: 'step', step: 6, status: 'start' });
         await Promise.all(
           saved.map(async (c) => {
-            const lead = (leadsByCampaign.get(c.id) ?? [])[0];
-            if (!lead) return;
-            const company = (foundByCampaign.get(c.id) ?? []).find((x) => x.domain === lead.companyDomain);
-            try {
-              const email = await writeEmail(profile, c, lead, company, profile.name);
-              await db?.insert(emails).values({ id: randomUUID(), runId, campaignId: c.id, ...email });
-              send({ type: 'email', campaignId: c.id, data: email });
-            } catch {
-              // A failed draft should not fail the run.
+            // Draft for the first few leads so the list is browsable, not a
+            // single take-it-or-leave-it email.
+            const top = (leadsByCampaign.get(c.id) ?? []).slice(0, 3);
+            for (const lead of top) {
+              const company = (foundByCampaign.get(c.id) ?? []).find((x) => x.domain === lead.companyDomain);
+              try {
+                const email = await writeEmail(profile, c, lead, company, profile.name);
+                await db?.insert(emails).values({ id: randomUUID(), runId, campaignId: c.id, ...email });
+                send({ type: 'email', campaignId: c.id, data: email });
+              } catch {
+                // A failed draft should not fail the run.
+              }
             }
           }),
         );

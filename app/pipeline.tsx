@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { CompetitorsSkeleton, CampaignsSkeleton, TableSkeleton, EmailSkeleton } from './skeleton';
+import { Outreach, type Person, type Email } from './outreach';
 
 type Profile = { name: string; description: string; product: string; bullets: string[]; queries: string[] };
 type Hit = { domain: string; name: string | null; snippet: string | null; verified: boolean };
@@ -14,8 +15,6 @@ type Campaign = {
   id: string; name: string; pitch: string; pain: string;
   criteria: string[]; exampleClients: string[]; searchQuery: string;
 };
-type Person = { name: string; title: string; companyDomain: string; companyName: string | null; linkedinUrl: string | null };
-type Email = { subject: string; body: string; toName: string; toTitle: string; toCompany: string };
 
 const STEPS = [
   'Research your company',
@@ -41,7 +40,7 @@ export function Pipeline({ start, onReset }: { start: Start; onReset: () => void
   const [camps, setCamps] = useState<Campaign[] | null>(null);
   const [found, setFound] = useState<Record<string, Scored[]>>({});
   const [leads, setLeads] = useState<Record<string, Person[]>>({});
-  const [mails, setMails] = useState<Record<string, Email>>({});
+  const [mails, setMails] = useState<Record<string, Email[]>>({});
   const [selected, setSelected] = useState<string | null>(null);
   const [view, setView] = useState<'companies' | 'people' | 'email'>('companies');
   const [error, setError] = useState<string | null>(null);
@@ -86,7 +85,9 @@ export function Pipeline({ start, onReset }: { start: Start; onReset: () => void
               break;
             case 'companies': setFound((f) => ({ ...f, [ev.campaignId]: ev.data })); break;
             case 'people': setLeads((p) => ({ ...p, [ev.campaignId]: ev.data })); break;
-            case 'email': setMails((m) => ({ ...m, [ev.campaignId]: ev.data })); break;
+            case 'email':
+              setMails((m) => ({ ...m, [ev.campaignId]: [...(m[ev.campaignId] ?? []), ev.data] }));
+              break;
             case 'error': setError(ev.message); break;
             case 'done': setFinished(true); break;
           }
@@ -144,8 +145,10 @@ export function Pipeline({ start, onReset }: { start: Start; onReset: () => void
 
             {view === 'email' &&
               (mails[current.id] === undefined
-                ? (done.has(6) ? <Empty what="email" /> : <EmailSkeleton />)
-                : <EmailCard email={mails[current.id]} />)}
+                ? done.has(6)
+                  ? <Empty what="email" />
+                  : <EmailSkeleton />
+                : <Outreach leads={leads[current.id] ?? []} emails={mails[current.id]} />)}
           </section>
         )}
 
@@ -398,21 +401,6 @@ function People({ rows }: { rows: Person[] }) {
   );
 }
 
-function EmailCard({ email }: { email: Email }) {
-  return (
-    <div className="rounded-2xl border border-neutral-200 dark:border-neutral-800">
-      <div className="border-b border-neutral-200 p-5 dark:border-neutral-800">
-        <p className="font-medium">{email.toName}</p>
-        <p className="text-sm text-neutral-500">{email.toTitle} · {email.toCompany}</p>
-      </div>
-      <div className="space-y-1 border-b border-neutral-200 px-5 py-3 text-sm dark:border-neutral-800">
-        <p><span className="mr-3 text-neutral-400">Subj</span><span className="font-medium">{email.subject}</span></p>
-      </div>
-      <pre className="whitespace-pre-wrap p-5 font-sans text-sm leading-relaxed">{email.body}</pre>
-    </div>
-  );
-}
-
 function Table({ head, children }: { head: string[]; children: React.ReactNode }) {
   return (
     <div className="-mx-6 overflow-x-auto px-6 lg:mx-0 lg:px-0">
@@ -462,14 +450,14 @@ function Logs({ logs }: { logs: string[] }) {
 function Sidebar(props: {
   domain: string | null; label: string; onReset: () => void; profile: Profile | null; logs: string[];
   comps: Hit[] | null; camps: Campaign[] | null; found: Record<string, Scored[]>;
-  leads: Record<string, Person[]>; mails: Record<string, Email>;
+  leads: Record<string, Person[]>; mails: Record<string, Email[]>;
   done: Set<number>; active: number; provider: string;
   selected: string | null; onSelect: (id: string) => void;
 }) {
   const { domain, label, onReset, profile, logs, comps, camps, found, leads, mails, done, active, selected, onSelect } = props;
   const companyCount = Object.values(found).flat().length;
   const peopleCount = Object.values(leads).flat().length;
-  const emailCount = Object.keys(mails).length;
+  const emailCount = Object.values(mails).flat().length;
   const maxCount = Math.max(1, ...Object.values(found).map((f) => f.length));
   return (
     <aside className="shrink-0 border-b border-neutral-200 p-5 lg:w-80 lg:border-b-0 lg:border-r dark:border-neutral-800">
