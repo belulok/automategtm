@@ -3,9 +3,11 @@ import { eq } from 'drizzle-orm';
 import { getDb, ensureSchema, hasDb, runs, profiles, competitors, campaigns, companies, people, emails } from '@/lib/db';
 import { crawl } from '@/lib/pipeline/crawl';
 import {
-  buildProfile, findCompetitors, defineCampaigns, findCompanies,
+  buildProfile, buildProfileFromSearch, buildProfileFromDescription,
+  findCompetitors, defineCampaigns, findCompanies,
   findDecisionMakers, writeEmail, type ScoredCompany,
 } from '@/lib/pipeline/steps';
+import { CrawlBlockedError } from '@/lib/pipeline/crawl';
 import { activeProvider } from '@/lib/pipeline/search';
 
 export const runtime = 'nodejs';
@@ -15,8 +17,12 @@ export const maxDuration = 300;
 const eqRun = (id: string) => eq(runs.id, id);
 
 export async function POST(req: Request) {
-  const { domain } = (await req.json()) as { domain?: string };
-  if (!domain) return new Response('domain required', { status: 400 });
+  const body = (await req.json()) as { domain?: string; oneLiner?: string; detail?: string };
+  const { domain, oneLiner, detail } = body;
+  if (!domain && !oneLiner?.trim()) {
+    return new Response('domain or oneLiner required', { status: 400 });
+  }
+  const label = domain ?? oneLiner!.slice(0, 80);
 
   const runId = randomUUID();
   const encoder = new TextEncoder();
@@ -29,23 +35,44 @@ export async function POST(req: Request) {
       try {
         await ensureSchema();
         const db = getDb();
-        await db?.insert(runs).values({ id: runId, domain });
+        await db?.insert(runs).values({ id: runId, domain: label });
         send({ type: 'run', runId, provider: activeProvider(), persisted: hasDb() });
 
         /* step 1 ------------------------------------------------------- */
         send({ type: 'step', step: 1, status: 'start' });
-        send({ type: 'log', text: `fetching ${domain}…` });
-        const crawled = await crawl(domain);
-        send({ type: 'log', text: `read ${crawled.pages.map((p) => p.path).join(' and ')}…` });
-        send({ type: 'log', text: 'extracting what you sell and to whom…' });
-        const profile = await buildProfile(crawled);
+
+        let profile;
+        let selfDomain: string | undefined;
+
+        if (!domain) {
+          // No website yet: the description IS the source.
+          send({ type: 'log', text: 'reading your description…' });
+          send({ type: 'log', text: 'working out what you sell and to whom…' });
+          profile = await buildProfileFromDescription(oneLiner!, detail ?? '');
+        } else {
+          selfDomain = domain;
+          send({ type: 'log', text: `fetching ${domain}…` });
+          try {
+            const crawled = await crawl(domain);
+            selfDomain = crawled.domain;
+            send({ type: 'log', text: `read ${crawled.pages.map((p) => p.path).join(' and ')}…` });
+            send({ type: 'log', text: 'extracting what you sell and to whom…' });
+            profile = await buildProfile(crawled);
+          } catch (err) {
+            if (!(err instanceof CrawlBlockedError)) throw err;
+            // Blocked or unreachable from this host. Ask the search index what
+            // it knows instead of failing the whole run.
+            send({ type: 'log', text: `${domain} blocked a direct read, asking search instead…` });
+            profile = await buildProfileFromSearch(domain);
+          }
+        }
         await db?.insert(profiles).values({ runId, ...profile });
         send({ type: 'profile', data: profile });
         send({ type: 'step', step: 1, status: 'done' });
 
         /* step 2 ------------------------------------------------------- */
         send({ type: 'step', step: 2, status: 'start' });
-        const hits = await findCompetitors(profile, crawled.domain);
+        const hits = await findCompetitors(profile, selfDomain);
         for (const h of hits) {
           await db
             ?.insert(competitors)

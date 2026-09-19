@@ -1,5 +1,8 @@
 const PATHS = ['', '/about', '/pricing'];
-const UA = 'Mozilla/5.0 (compatible; auto-gtm/0.1; +https://example.com/bot)';
+// A plain bot UA gets 403 from a lot of sites behind Cloudflare.
+const UA =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
+  '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
 /** Crude but dependency-free HTML -> text. Good enough to feed an LLM. */
 function toText(html: string): string {
@@ -56,15 +59,51 @@ export type Crawled = {
   thin: boolean;
 };
 
+export class CrawlBlockedError extends Error {
+  constructor(public host: string, public status: number | null) {
+    super(`Could not read ${host} directly (${status ?? 'no response'}).`);
+    this.name = 'CrawlBlockedError';
+  }
+}
+
+/** Try the bare host, then www, then plain http. */
+function originsFor(host: string): string[] {
+  const bare = host.replace(/^www\./, '');
+  return [`https://${bare}`, `https://www.${bare}`, `http://${bare}`];
+}
+
 export async function crawl(domain: string, signal?: AbortSignal): Promise<Crawled> {
   const host = domain.replace(/^https?:\/\//, '').replace(/\/+$/, '');
   const pages: { path: string; text: string }[] = [];
   let title: string | null = null;
+  let lastStatus: number | null = null;
+
+  // Find an origin that answers before spending requests on sub-pages: some
+  // hosts only serve www, and some redirect http -> https only.
+  let origin: string | null = null;
+  for (const candidate of originsFor(host)) {
+    try {
+      const res = await fetch(candidate, {
+        headers: { 'user-agent': UA, accept: 'text/html,application/xhtml+xml' },
+        signal: signal ?? AbortSignal.timeout(15_000),
+        redirect: 'follow',
+      });
+      lastStatus = res.status;
+      if (res.ok) {
+        origin = new URL(res.url).origin;
+        break;
+      }
+    } catch {
+      // try the next origin
+    }
+  }
+
+  if (!origin) throw new CrawlBlockedError(host, lastStatus);
 
   for (const path of PATHS) {
     try {
-      const res = await fetch(`https://${host}${path}`, {
-        headers: { 'user-agent': UA },
+      const res = await fetch(`${origin}${path}`, {
+        headers: { 'user-agent': UA, accept: 'text/html,application/xhtml+xml' },
         signal: signal ?? AbortSignal.timeout(15_000),
         redirect: 'follow',
       });
@@ -81,9 +120,7 @@ export async function crawl(domain: string, signal?: AbortSignal): Promise<Crawl
     }
   }
 
-  if (pages.length === 0) {
-    throw new Error(`Could not read anything from ${host}. Is the domain correct and public?`);
-  }
+  if (pages.length === 0) throw new CrawlBlockedError(host, lastStatus);
   // Under ~400 chars means client-rendered: metadata only, no real copy.
   const thin = pages.reduce((n, p) => n + p.text.length, 0) < 400;
   return { domain: host, title, pages, thin };

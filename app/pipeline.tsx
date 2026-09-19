@@ -28,7 +28,11 @@ const STEPS = [
 
 const favicon = (d: string) => `https://www.google.com/s2/favicons?domain=${encodeURIComponent(d)}&sz=64`;
 
-export function Pipeline({ domain, onReset }: { domain: string; onReset: () => void }) {
+export type Start = { domain: string } | { oneLiner: string; detail: string };
+
+export function Pipeline({ start, onReset }: { start: Start; onReset: () => void }) {
+  const domain = 'domain' in start ? start.domain : null;
+  const label = domain ?? ('oneLiner' in start ? start.oneLiner : '');
   const [logs, setLogs] = useState<string[]>([]);
   const [done, setDone] = useState<Set<number>>(new Set());
   const [active, setActive] = useState(1);
@@ -52,7 +56,7 @@ export function Pipeline({ domain, onReset }: { domain: string; onReset: () => v
       const res = await fetch('/api/research', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ domain }),
+        body: JSON.stringify(start),
       });
       if (!res.body) return setError('No response stream');
       const reader = res.body.getReader();
@@ -89,20 +93,20 @@ export function Pipeline({ domain, onReset }: { domain: string; onReset: () => v
         }
       }
     })().catch((e) => setError(e instanceof Error ? e.message : String(e)));
-  }, [domain]);
+  }, [start]);
 
   const current = camps?.find((c) => c.id === selected) ?? null;
 
   return (
     <div className="flex min-h-dvh flex-col lg:flex-row">
       <Sidebar
-        domain={domain} onReset={onReset} profile={profile} logs={logs}
+        domain={domain} label={label} onReset={onReset} profile={profile} logs={logs}
         comps={comps} camps={camps} found={found} done={done} provider={provider}
         selected={selected} onSelect={setSelected}
       />
 
       <main className="min-w-0 flex-1 p-6 lg:p-10">
-        <div className="mb-8 flex flex-wrap items-start justify-between gap-6">
+        <div className="mb-8 flex flex-col items-start justify-between gap-5 xl:flex-row xl:gap-6">
           <Stepper steps={STEPS} done={done} active={active} />
           <WhatHappensNext ready={done.has(6)} />
         </div>
@@ -189,11 +193,11 @@ function Stepper({ steps, done, active }: { steps: string[]; done: Set<number>; 
 function WhatHappensNext({ ready }: { ready: boolean }) {
   const next = ['Send emails', 'Book meetings', 'Learn & double down'];
   return (
-    <div className="shrink-0">
-      <p className="mb-2 text-right text-[10px] uppercase tracking-wider text-neutral-400">
+    <div className="w-full shrink-0 xl:w-auto">
+      <p className="mb-2 text-[10px] uppercase tracking-wider text-neutral-400 xl:text-right">
         What happens next
       </p>
-      <ol className="flex items-center gap-3">
+      <ol className="flex flex-wrap items-center gap-x-3 gap-y-2">
         {next.map((label, i) => (
           <li key={label} className="flex items-center gap-2">
             {i > 0 && <span className="text-neutral-300 dark:text-neutral-700">—</span>}
@@ -213,7 +217,7 @@ function WhatHappensNext({ ready }: { ready: boolean }) {
         ))}
       </ol>
       {ready && (
-        <p className="mt-2 text-right text-xs text-neutral-400">
+        <p className="mt-2 text-xs text-neutral-400 xl:text-right">
           not built — sending needs pre-warmed inboxes
         </p>
       )}
@@ -410,8 +414,8 @@ function EmailCard({ email }: { email: Email }) {
 
 function Table({ head, children }: { head: string[]; children: React.ReactNode }) {
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full border-separate border-spacing-0 text-sm">
+    <div className="-mx-6 overflow-x-auto px-6 lg:mx-0 lg:px-0">
+      <table className="w-full min-w-[42rem] border-separate border-spacing-0 text-sm">
         <thead className="text-left text-xs uppercase tracking-wide text-neutral-500">
           <tr>
             {head.map((h, i) => (
@@ -455,11 +459,11 @@ function Logs({ logs }: { logs: string[] }) {
 }
 
 function Sidebar(props: {
-  domain: string; onReset: () => void; profile: Profile | null; logs: string[];
+  domain: string | null; label: string; onReset: () => void; profile: Profile | null; logs: string[];
   comps: Hit[] | null; camps: Campaign[] | null; found: Record<string, Scored[]>;
   done: Set<number>; provider: string; selected: string | null; onSelect: (id: string) => void;
 }) {
-  const { domain, onReset, profile, logs, comps, camps, found, done, selected, onSelect } = props;
+  const { domain, label, onReset, profile, logs, comps, camps, found, done, selected, onSelect } = props;
   return (
     <aside className="shrink-0 border-b border-neutral-200 p-5 lg:w-80 lg:border-b-0 lg:border-r dark:border-neutral-800">
       <button onClick={onReset} className="mb-6 text-sm text-neutral-500 transition hover:text-neutral-900 dark:hover:text-neutral-100">
@@ -470,11 +474,13 @@ function Sidebar(props: {
         {profile ? (
           <>
             <div className="flex items-center gap-2">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={favicon(domain)} alt="" width={20} height={20} className="size-5 rounded" />
+              {domain && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={favicon(domain)} alt="" width={20} height={20} className="size-5 rounded" />
+              )}
               <p className="font-semibold">{profile.name}</p>
             </div>
-            <p className="mt-0.5 font-mono text-xs text-neutral-500">{domain}</p>
+            <p className="mt-0.5 font-mono text-xs text-neutral-500">{domain ?? 'no website yet'}</p>
             <p className="mt-2 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">{profile.description}</p>
           </>
         ) : (
