@@ -43,6 +43,9 @@ export function Pipeline({ start, onReset }: { start: Start; onReset: () => void
   const [mails, setMails] = useState<Record<string, Email[]>>({});
   const [selected, setSelected] = useState<string | null>(null);
   const [view, setView] = useState<'companies' | 'people' | 'email'>('companies');
+  // Once the person picks a segment or a tab themselves, stop moving it.
+  const [pinnedSegment, setPinnedSegment] = useState(false);
+  const [pinnedView, setPinnedView] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [provider, setProvider] = useState('none');
   const [finished, setFinished] = useState(false);
@@ -81,7 +84,6 @@ export function Pipeline({ start, onReset }: { start: Start; onReset: () => void
             case 'competitors': setComps(ev.data); break;
             case 'campaigns':
               setCamps(ev.data);
-              setSelected((s) => s ?? ev.data[0]?.id ?? null);
               break;
             case 'companies': setFound((f) => ({ ...f, [ev.campaignId]: ev.data })); break;
             case 'people': setLeads((p) => ({ ...p, [ev.campaignId]: ev.data })); break;
@@ -96,7 +98,23 @@ export function Pipeline({ start, onReset }: { start: Start; onReset: () => void
     })().catch((e) => setError(e instanceof Error ? e.message : String(e)));
   }, [start]);
 
+  // Land where the work is. The first segment is often the emptiest, and
+  // dead-ending on "no leads" after a two-minute run is the wrong payoff.
+  useEffect(() => {
+    if (pinnedSegment || !camps?.length) return;
+    const best =
+      camps.find((c) => (mails[c.id] ?? []).length > 0) ??
+      camps.find((c) => (leads[c.id] ?? []).length > 0) ??
+      [...camps].sort((a, b) => (found[b.id]?.length ?? 0) - (found[a.id]?.length ?? 0))[0];
+    if (best && best.id !== selected) setSelected(best.id);
+  }, [camps, mails, leads, found, pinnedSegment, selected]);
+
+  useEffect(() => {
+    if (!pinnedView && done.has(6)) setView('email');
+  }, [done, pinnedView]);
+
   const current = camps?.find((c) => c.id === selected) ?? null;
+  const withLeads = (camps ?? []).filter((c) => (leads[c.id] ?? []).length > 0);
 
   return (
     <div className="flex min-h-dvh flex-col lg:flex-row">
@@ -104,7 +122,7 @@ export function Pipeline({ start, onReset }: { start: Start; onReset: () => void
         domain={domain} label={label} onReset={onReset} profile={profile} logs={logs}
         comps={comps} camps={camps} found={found} leads={leads} mails={mails}
         done={done} active={active} provider={provider}
-        selected={selected} onSelect={setSelected}
+        selected={selected} onSelect={(id) => { setPinnedSegment(true); setSelected(id); }}
       />
 
       <main className="min-w-0 flex-1 p-6 lg:p-10">
@@ -132,7 +150,7 @@ export function Pipeline({ start, onReset }: { start: Start; onReset: () => void
                 <h2 className="text-xl font-semibold">{current.name}</h2>
                 <p className="mt-0.5 text-sm text-neutral-600 dark:text-neutral-400">{current.pitch}</p>
               </div>
-              <Tabs view={view} setView={setView} />
+              <Tabs view={view} setView={(v) => { setPinnedView(true); setView(v); }} />
             </div>
 
             {view === 'companies' &&
@@ -148,6 +166,8 @@ export function Pipeline({ start, onReset }: { start: Start; onReset: () => void
               // leads — a segment with no draft yet is not an empty screen.
               (!done.has(6) && (leads[current.id] ?? []).length === 0 ? (
                 <EmailSkeleton />
+              ) : (leads[current.id] ?? []).length === 0 ? (
+                <NoLeads current={current.name} options={withLeads} onPick={(id) => { setPinnedSegment(true); setSelected(id); }} />
               ) : (
                 <Outreach leads={leads[current.id] ?? []} emails={mails[current.id] ?? []} />
               ))}
@@ -226,6 +246,39 @@ function WhatHappensNext({ ready }: { ready: boolean }) {
         <p className="mt-2 text-xs text-neutral-400 xl:text-right">
           not built — sending needs pre-warmed inboxes
         </p>
+      )}
+    </div>
+  );
+}
+
+/** Never dead-end: name the segments that did produce leads and jump to them. */
+function NoLeads({
+  current, options, onPick,
+}: { current: string; options: { id: string; name: string }[]; onPick: (id: string) => void }) {
+  return (
+    <div className="rounded-xl border border-neutral-200 p-5 dark:border-neutral-800">
+      <p className="text-sm">
+        No decision makers surfaced for <span className="font-medium">{current}</span>.
+      </p>
+      <p className="mt-1.5 text-sm text-neutral-500">
+        Public LinkedIn search found no individual profiles at these companies. That is
+        common when a segment describes an audience rather than an organisation that buys.
+      </p>
+      {options.length > 0 && (
+        <>
+          <p className="mt-4 text-xs uppercase tracking-wide text-neutral-400">Segments with leads</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {options.map((o) => (
+              <button
+                key={o.id}
+                onClick={() => onPick(o.id)}
+                className="rounded-lg border border-neutral-200 px-3 py-1.5 text-sm transition hover:border-neutral-400 dark:border-neutral-800 dark:hover:border-neutral-600"
+              >
+                {o.name} →
+              </button>
+            ))}
+          </div>
+        </>
       )}
     </div>
   );
