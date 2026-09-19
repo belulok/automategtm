@@ -3,23 +3,26 @@
 import { useState } from 'react';
 import { Pipeline } from './pipeline';
 import { NodeField } from './nodefield';
+import { DescribeModal, type Described } from './describe-modal';
 
-type Start = { domain: string } | { oneLiner: string; detail: string };
+type Start = { domain: string } | { oneLiner: string; detail: string; geography?: string };
 
 export default function Home() {
-  const [mode, setMode] = useState<'domain' | 'describe'>('domain');
   const [domain, setDomain] = useState('');
-  const [oneLiner, setOneLiner] = useState('');
-  const [detail, setDetail] = useState('');
+  const [modalOpen, setModalOpen] = useState(false);
   const [running, setRunning] = useState<Start | null>(null);
 
   const cleanDomain = domain.trim().replace(/^https?:\/\//i, '').replace(/\/.*$/, '');
-  const ready = mode === 'domain' ? cleanDomain.includes('.') : oneLiner.trim().length >= 12;
+  const ready = cleanDomain.includes('.');
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!ready) return;
-    setRunning(mode === 'domain' ? { domain: cleanDomain } : { oneLiner: oneLiner.trim(), detail: detail.trim() });
+    if (ready) setRunning({ domain: cleanDomain });
+  }
+
+  function fromDescription(d: Described) {
+    setModalOpen(false);
+    setRunning({ oneLiner: d.oneLiner, detail: d.detail, geography: d.geography });
   }
 
   if (running) return <Pipeline start={running} onReset={() => setRunning(null)} />;
@@ -34,61 +37,40 @@ export default function Home() {
         </h1>
 
         <p className="relative z-10 mx-auto mt-5 max-w-lg text-balance text-center leading-relaxed text-neutral-600 sm:mt-6 sm:text-lg dark:text-neutral-400">
-          {mode === 'domain'
-            ? 'Paste a website. It reads the site, finds the competitors, splits the market into segments, then scores real companies and names who to contact.'
-            : 'Describe what you are building. Everything downstream works the same — you do not need a live site to know who your buyers are.'}
+          Paste a website. It reads the site, finds the competitors, splits the market
+          into segments, then scores real companies and names who to contact.
         </p>
 
         <div className="relative mx-auto mt-8 max-w-xl sm:mt-10">
           <NodeField />
-          <form onSubmit={submit} className="relative z-10">
-          {mode === 'domain' ? (
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <input
-                value={domain}
-                onChange={(e) => setDomain(e.target.value)}
-                placeholder="yourcompany.com"
-                autoFocus
-                spellCheck={false}
-                autoCapitalize="off"
-                autoCorrect="off"
-                aria-label="Website to research"
-                className="min-w-0 flex-1 rounded-xl border border-neutral-300 bg-white px-5 py-4 text-base shadow-sm outline-none transition placeholder:text-neutral-400 focus:border-neutral-900 focus:shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:focus:border-neutral-100"
-              />
-              <SubmitButton ready={ready} />
-            </div>
-          ) : (
-            <div className="space-y-2">
-              <input
-                value={oneLiner}
-                onChange={(e) => setOneLiner(e.target.value)}
-                placeholder="One line: what does it do, and for whom?"
-                autoFocus
-                maxLength={160}
-                aria-label="One-line description"
-                className="w-full rounded-xl border border-neutral-300 bg-white px-5 py-4 text-base shadow-sm outline-none transition placeholder:text-neutral-400 focus:border-neutral-900 focus:shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:focus:border-neutral-100"
-              />
-              <textarea
-                value={detail}
-                onChange={(e) => setDetail(e.target.value)}
-                placeholder="Optional: more detail — what it does, who it is for, what it is not."
-                rows={4}
-                maxLength={1200}
-                aria-label="Longer description"
-                className="w-full resize-y rounded-xl border border-neutral-300 bg-white px-5 py-4 text-base shadow-sm outline-none transition placeholder:text-neutral-400 focus:border-neutral-900 focus:shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:focus:border-neutral-100"
-              />
-              <SubmitButton ready={ready} full />
-            </div>
-          )}
+          <form onSubmit={submit} className="relative z-10 flex flex-col gap-2 sm:flex-row">
+            <input
+              value={domain}
+              onChange={(e) => setDomain(e.target.value)}
+              placeholder="yourcompany.com"
+              autoFocus
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+              aria-label="Website to research"
+              className="min-w-0 flex-1 rounded-xl border border-neutral-300 bg-white px-5 py-4 text-base shadow-sm outline-none transition placeholder:text-neutral-400 focus:border-neutral-900 focus:shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:focus:border-neutral-100"
+            />
+            <button
+              type="submit"
+              disabled={!ready}
+              className="relative z-10 shrink-0 rounded-xl bg-neutral-900 px-6 py-4 font-medium text-white shadow-sm transition hover:bg-neutral-700 disabled:cursor-not-allowed disabled:bg-neutral-200 disabled:text-neutral-400 disabled:shadow-none dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200 dark:disabled:bg-neutral-800 dark:disabled:text-neutral-600"
+            >
+              Research
+            </button>
           </form>
         </div>
 
         <div className="relative z-10 mt-5 text-center">
           <button
-            onClick={() => setMode(mode === 'domain' ? 'describe' : 'domain')}
+            onClick={() => setModalOpen(true)}
             className="text-sm text-neutral-500 underline-offset-4 transition hover:text-neutral-900 hover:underline dark:hover:text-neutral-100"
           >
-            {mode === 'domain' ? "I don't have a website yet" : '← I have a website'}
+            I don&rsquo;t have a website
           </button>
         </div>
 
@@ -101,18 +83,8 @@ export default function Home() {
           ))}
         </ol>
       </div>
-    </main>
-  );
-}
 
-function SubmitButton({ ready, full }: { ready: boolean; full?: boolean }) {
-  return (
-    <button
-      type="submit"
-      disabled={!ready}
-      className={`relative z-10 shrink-0 rounded-xl bg-neutral-900 px-6 py-4 font-medium text-white shadow-sm transition hover:bg-neutral-700 disabled:cursor-not-allowed disabled:bg-neutral-200 disabled:text-neutral-400 disabled:shadow-none dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200 dark:disabled:bg-neutral-800 dark:disabled:text-neutral-600 ${full ? 'w-full' : ''}`}
-    >
-      Research
-    </button>
+      {modalOpen && <DescribeModal onClose={() => setModalOpen(false)} onSubmit={fromDescription} />}
+    </main>
   );
 }

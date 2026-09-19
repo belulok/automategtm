@@ -8,7 +8,7 @@ import {
   findDecisionMakers, writeEmail, type ScoredCompany,
 } from '@/lib/pipeline/steps';
 import { CrawlBlockedError } from '@/lib/pipeline/crawl';
-import { activeProvider } from '@/lib/pipeline/search';
+import { activeProvider, searchFailure, clearSearchFailure } from '@/lib/pipeline/search';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -17,8 +17,10 @@ export const maxDuration = 300;
 const eqRun = (id: string) => eq(runs.id, id);
 
 export async function POST(req: Request) {
-  const body = (await req.json()) as { domain?: string; oneLiner?: string; detail?: string };
-  const { domain, oneLiner, detail } = body;
+  const body = (await req.json()) as {
+    domain?: string; oneLiner?: string; detail?: string; geography?: string;
+  };
+  const { domain, oneLiner, detail, geography } = body;
   if (!domain && !oneLiner?.trim()) {
     return new Response('domain or oneLiner required', { status: 400 });
   }
@@ -33,6 +35,7 @@ export async function POST(req: Request) {
         controller.enqueue(encoder.encode(JSON.stringify(event) + '\n'));
 
       try {
+        clearSearchFailure();
         await ensureSchema();
         const db = getDb();
         await db?.insert(runs).values({ id: runId, domain: label });
@@ -48,7 +51,7 @@ export async function POST(req: Request) {
           // No website yet: the description IS the source.
           send({ type: 'log', text: 'reading your description…' });
           send({ type: 'log', text: 'working out what you sell and to whom…' });
-          profile = await buildProfileFromDescription(oneLiner!, detail ?? '');
+          profile = await buildProfileFromDescription(oneLiner!, detail ?? '', geography ?? '');
         } else {
           selfDomain = domain;
           send({ type: 'log', text: `fetching ${domain}…` });
@@ -79,6 +82,7 @@ export async function POST(req: Request) {
             .values({ id: randomUUID(), runId, domain: h.domain, name: h.name, note: h.snippet });
         }
         send({ type: 'competitors', data: hits });
+        if (searchFailure()) send({ type: 'warning', text: searchFailure()! });
         send({ type: 'step', step: 2, status: 'done' });
 
         /* step 3 ------------------------------------------------------- */

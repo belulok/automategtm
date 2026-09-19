@@ -35,6 +35,17 @@ export function activeProvider(): Provider {
 export const hasSearch = () => activeProvider() !== 'none';
 
 /**
+ * Last hard failure from the provider, kept so the UI can say "search is out of
+ * quota" instead of showing an empty list. A silent [] on failure is the same
+ * bug that once rendered every company as unreachable.
+ */
+let lastFailure: string | null = null;
+export const searchFailure = () => lastFailure;
+export const clearSearchFailure = () => {
+  lastFailure = null;
+};
+
+/**
  * Search returns a lot of things that are not companies: social, encyclopedias,
  * and especially B2B data aggregators, which rank well for exactly the queries
  * this pipeline generates and are never the answer.
@@ -192,8 +203,17 @@ export async function searchWeb(
         return [];
     }
   } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    // 432/429 are quota, 401/403 are a bad key: all worth saying out loud.
+    if (/\b(401|403|429|432)\b/.test(msg)) {
+      lastFailure = /432|429/.test(msg)
+        ? `${provider} is out of search quota`
+        : `${provider} rejected the API key`;
+    } else {
+      lastFailure = `${provider} search failed`;
+    }
     // A failed search degrades the run, it does not end it.
-    console.warn(`[search:${provider}] ${err instanceof Error ? err.message : err}`);
+    console.warn(`[search:${provider}] ${msg}`);
     return [];
   }
 }

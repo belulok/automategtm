@@ -47,6 +47,7 @@ export function Pipeline({ start, onReset }: { start: Start; onReset: () => void
   const [pinnedSegment, setPinnedSegment] = useState(false);
   const [pinnedView, setPinnedView] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
   const [provider, setProvider] = useState('none');
   const [finished, setFinished] = useState(false);
   const started = useRef(false);
@@ -90,6 +91,7 @@ export function Pipeline({ start, onReset }: { start: Start; onReset: () => void
             case 'email':
               setMails((m) => ({ ...m, [ev.campaignId]: [...(m[ev.campaignId] ?? []), ev.data] }));
               break;
+            case 'warning': setWarning(ev.text); break;
             case 'error': setError(ev.message); break;
             case 'done': setFinished(true); break;
           }
@@ -134,6 +136,13 @@ export function Pipeline({ start, onReset }: { start: Start; onReset: () => void
         {error && (
           <div className="rounded-xl border border-red-300 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
             {error}
+          </div>
+        )}
+
+        {warning && (
+          <div className="mb-5 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+            {warning}. Competitors and companies fall back to the model&rsquo;s own recall,
+            which is weaker and unverified.
           </div>
         )}
 
