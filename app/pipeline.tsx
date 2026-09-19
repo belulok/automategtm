@@ -144,11 +144,13 @@ export function Pipeline({ start, onReset }: { start: Start; onReset: () => void
                 : <People rows={leads[current.id]} />)}
 
             {view === 'email' &&
-              (mails[current.id] === undefined
-                ? done.has(6)
-                  ? <Empty what="email" />
-                  : <EmailSkeleton />
-                : <Outreach leads={leads[current.id] ?? []} emails={mails[current.id]} />)}
+              // The lead list stands on its own, so show it whenever there are
+              // leads — a segment with no draft yet is not an empty screen.
+              (!done.has(6) && (leads[current.id] ?? []).length === 0 ? (
+                <EmailSkeleton />
+              ) : (
+                <Outreach leads={leads[current.id] ?? []} emails={mails[current.id] ?? []} />
+              ))}
           </section>
         )}
 
