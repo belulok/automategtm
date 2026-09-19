@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Pipeline } from './pipeline';
+import { NodeField } from './nodefield';
 
 type Start = { domain: string } | { oneLiner: string; detail: string };
 
@@ -25,31 +26,22 @@ export default function Home() {
 
   return (
     <main className="relative flex min-h-dvh flex-col items-center justify-center overflow-hidden px-5 py-16 sm:px-6">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 opacity-[0.18] dark:opacity-[0.22]"
-        style={{
-          backgroundImage: 'radial-gradient(currentColor 1px, transparent 1px)',
-          backgroundSize: '28px 28px',
-          maskImage: 'radial-gradient(ellipse 70% 55% at 50% 45%, #000 20%, transparent 75%)',
-          WebkitMaskImage: 'radial-gradient(ellipse 70% 55% at 50% 45%, #000 20%, transparent 75%)',
-        }}
-      />
-
       <div className="relative w-full max-w-2xl">
-        <h1 className="text-balance text-center text-4xl font-semibold leading-[1.05] tracking-tight sm:text-6xl">
+        <h1 className="relative z-10 text-balance text-center text-4xl font-semibold leading-[1.05] tracking-tight sm:text-6xl">
           Find out who buys
           <br />
           <span className="text-emerald-600 dark:text-emerald-400">and why</span>
         </h1>
 
-        <p className="mx-auto mt-5 max-w-lg text-balance text-center leading-relaxed text-neutral-600 sm:mt-6 sm:text-lg dark:text-neutral-400">
+        <p className="relative z-10 mx-auto mt-5 max-w-lg text-balance text-center leading-relaxed text-neutral-600 sm:mt-6 sm:text-lg dark:text-neutral-400">
           {mode === 'domain'
             ? 'Paste a website. It reads the site, finds the competitors, splits the market into segments, then scores real companies and names who to contact.'
             : 'Describe what you are building. Everything downstream works the same — you do not need a live site to know who your buyers are.'}
         </p>
 
-        <form onSubmit={submit} className="mx-auto mt-8 max-w-xl sm:mt-10">
+        <div className="relative mx-auto mt-8 max-w-xl sm:mt-10">
+          <NodeField />
+          <form onSubmit={submit} className="relative z-10">
           {mode === 'domain' ? (
             <div className="flex flex-col gap-2 sm:flex-row">
               <input
@@ -88,9 +80,10 @@ export default function Home() {
               <SubmitButton ready={ready} full />
             </div>
           )}
-        </form>
+          </form>
+        </div>
 
-        <div className="mt-5 text-center">
+        <div className="relative z-10 mt-5 text-center">
           <button
             onClick={() => setMode(mode === 'domain' ? 'describe' : 'domain')}
             className="text-sm text-neutral-500 underline-offset-4 transition hover:text-neutral-900 hover:underline dark:hover:text-neutral-100"
@@ -99,7 +92,7 @@ export default function Home() {
           </button>
         </div>
 
-        <ol className="mx-auto mt-10 flex max-w-xl flex-wrap items-center justify-center gap-x-2 gap-y-2 text-xs text-neutral-500 sm:mt-12">
+        <ol className="relative z-10 mx-auto mt-10 flex max-w-xl flex-wrap items-center justify-center gap-x-2 gap-y-2 text-xs text-neutral-500 sm:mt-12">
           {['Research', 'Competitors', 'Campaigns', 'Customers', 'Decision makers', 'Email'].map((s, i) => (
             <li key={s} className="flex items-center gap-2">
               {i > 0 && <span className="text-neutral-300 dark:text-neutral-700">→</span>}

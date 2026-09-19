@@ -24,3 +24,33 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Nodes travel from the outer edge inward, fading at both ends so they appear
+   and vanish rather than popping. See app/nodefield.tsx. */
+@keyframes node-travel {
+  0% {
+    offset-distance: 0%;
+    opacity: 0;
+  }
+  12%,
+  85% {
+    opacity: var(--node-opacity, 0.45);
+  }
+  100% {
+    offset-distance: 100%;
+    opacity: 0;
+  }
+}
+
+.node-travel {
+  animation-name: node-travel;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .node-travel {
+    animation: none;
+    offset-distance: 55%;
+  }
+}
