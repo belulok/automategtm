@@ -110,7 +110,7 @@ function SubmitButton({ ready, full }: { ready: boolean; full?: boolean }) {
     <button
       type="submit"
       disabled={!ready}
-      className={`shrink-0 rounded-xl bg-neutral-900 px-6 py-4 font-medium text-white shadow-sm transition hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-30 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200 ${full ? 'w-full' : ''}`}
+      className={`relative z-10 shrink-0 rounded-xl bg-neutral-900 px-6 py-4 font-medium text-white shadow-sm transition hover:bg-neutral-700 disabled:cursor-not-allowed disabled:bg-neutral-200 disabled:text-neutral-400 disabled:shadow-none dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200 dark:disabled:bg-neutral-800 dark:disabled:text-neutral-600 ${full ? 'w-full' : ''}`}
     >
       Research
     </button>

@@ -11,7 +11,7 @@ const VW = 1000;
 const VH = 600;
 const MID_Y = VH / 2;
 /** Where the two funnels stop: roughly the left and right edges of the input. */
-const LEFT_FOCUS = 360;
+const LEFT_FOCUS = 395;
 const RIGHT_FOCUS = VW - LEFT_FOCUS;
 
 function buildPath(i: number, side: 'l' | 'r'): string {
@@ -66,7 +66,7 @@ export function NodeField() {
       aria-hidden
       viewBox={`0 0 ${VW} ${VH}`}
       preserveAspectRatio="none"
-      className="pointer-events-none absolute left-1/2 top-1/2 h-[min(140vh,760px)] w-screen max-w-none -translate-x-1/2 -translate-y-1/2 text-neutral-400 dark:text-neutral-500"
+      className="pointer-events-none absolute left-1/2 top-1/2 -z-10 h-[min(140vh,760px)] w-screen max-w-none -translate-x-1/2 -translate-y-1/2 text-neutral-400 dark:text-neutral-500"
     >
       <g className="opacity-40 dark:opacity-30">
         {PATHS.map((d, i) => (
