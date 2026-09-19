@@ -189,25 +189,45 @@ export function Pipeline({ start, onReset }: { start: Start; onReset: () => void
 /* ----------------------------------------------------------------- parts */
 
 function Stepper({ steps, done, active }: { steps: string[]; done: Set<number>; active: number }) {
+  const allDone = done.size >= steps.length;
+  // The furthest step reached carries the label; the rest are just numbers, so
+  // the row stays one line instead of six wrapped labels.
+  const current = allDone ? steps.length : active;
+  const label = allDone ? 'Outreach ready' : steps[current - 1];
+
   return (
-    <ol className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
-      {steps.map((label, i) => {
+    <ol className="flex min-w-0 flex-wrap items-center gap-y-2">
+      {steps.map((_, i) => {
         const n = i + 1;
-        const state = done.has(n) ? 'done' : active === n ? 'active' : 'idle';
+        const isCurrent = n === current;
+        const isDone = done.has(n) && !isCurrent;
         return (
-          <li key={label} className="flex items-center gap-2">
-            <span
-              className={`flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-medium ${
-                state === 'done'
-                  ? 'bg-emerald-500 text-white'
-                  : state === 'active'
+          <li key={n} className="flex items-center">
+            {i > 0 && (
+              <span
+                className={`mx-1.5 h-px w-4 sm:w-7 ${
+                  done.has(n - 1) ? 'bg-neutral-400 dark:bg-neutral-600' : 'bg-neutral-200 dark:bg-neutral-800'
+                }`}
+              />
+            )}
+            {isCurrent ? (
+              <span className="flex items-center gap-2 rounded-full border border-neutral-300 px-3 py-1 dark:border-neutral-700">
+                <span className={`size-1.5 rounded-full ${allDone ? 'bg-emerald-500' : 'animate-pulse bg-emerald-500'}`} />
+                <span className="text-sm font-semibold">{n}</span>
+                <span className="whitespace-nowrap text-sm font-medium">{label}</span>
+              </span>
+            ) : (
+              <span
+                title={steps[i]}
+                className={`flex size-7 items-center justify-center rounded-full text-xs font-semibold ${
+                  isDone
                     ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
                     : 'border border-neutral-300 text-neutral-400 dark:border-neutral-700'
-              }`}
-            >
-              {state === 'done' ? '✓' : n}
-            </span>
-            <span className={state === 'idle' ? 'text-neutral-400' : ''}>{label}</span>
+                }`}
+              >
+                {n}
+              </span>
+            )}
           </li>
         );
       })}
@@ -220,30 +240,32 @@ function WhatHappensNext({ ready }: { ready: boolean }) {
   const next = ['Send emails', 'Book meetings', 'Learn & double down'];
   return (
     <div className="w-full shrink-0 xl:w-auto">
-      <p className="mb-2 text-[10px] uppercase tracking-wider text-neutral-400 xl:text-right">
+      <p className="mb-1.5 text-[10px] uppercase tracking-wider text-neutral-400 xl:text-right">
         What happens next
       </p>
-      <ol className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        {next.map((label, i) => (
-          <li key={label} className="flex items-center gap-2">
-            {i > 0 && <span className="text-neutral-300 dark:text-neutral-700">—</span>}
-            <span
-              className={`flex size-6 items-center justify-center rounded-full border border-dashed text-xs ${
-                ready
-                  ? 'border-neutral-400 text-neutral-500'
-                  : 'border-neutral-300 text-neutral-300 dark:border-neutral-700 dark:text-neutral-700'
-              }`}
-            >
-              {i + 7}
-            </span>
-            <span className={`text-sm ${ready ? 'text-neutral-500' : 'text-neutral-400 dark:text-neutral-600'}`}>
-              {label}
+      <ol className="flex items-start gap-2">
+        {next.map((labelText, i) => (
+          <li key={labelText} className="flex items-start gap-2">
+            {i > 0 && <span className="mt-3.5 h-px w-4 bg-neutral-200 dark:bg-neutral-800" />}
+            <span className="flex flex-col items-center gap-1">
+              <span
+                className={`flex size-7 items-center justify-center rounded-full border border-dashed text-xs font-semibold ${
+                  ready
+                    ? 'border-neutral-400 text-neutral-500'
+                    : 'border-neutral-300 text-neutral-300 dark:border-neutral-700 dark:text-neutral-700'
+                }`}
+              >
+                {i + 7}
+              </span>
+              <span className={`whitespace-nowrap text-xs ${ready ? 'text-neutral-500' : 'text-neutral-400 dark:text-neutral-600'}`}>
+                {labelText}
+              </span>
             </span>
           </li>
         ))}
       </ol>
       {ready && (
-        <p className="mt-2 text-xs text-neutral-400 xl:text-right">
+        <p className="mt-1.5 text-[11px] text-neutral-400 xl:text-right">
           not built — sending needs pre-warmed inboxes
         </p>
       )}
@@ -510,6 +532,7 @@ function Sidebar(props: {
   selected: string | null; onSelect: (id: string) => void;
 }) {
   const { domain, label, onReset, profile, logs, comps, camps, found, leads, mails, done, active, selected, onSelect } = props;
+  const [showAllComps, setShowAllComps] = useState(false);
   const companyCount = Object.values(found).flat().length;
   const peopleCount = Object.values(leads).flat().length;
   const emailCount = Object.values(mails).flat().length;
@@ -541,7 +564,7 @@ function Sidebar(props: {
       {comps && (
         <Section label={`step 2 · competitors ${comps.length}`} done={done.has(2)}>
           <div className="grid grid-cols-2 gap-1.5">
-            {comps.slice(0, 8).map((c) => (
+            {(showAllComps ? comps : comps.slice(0, 8)).map((c) => (
               <a
                 key={c.domain}
                 href={`https://${c.domain}`}
@@ -559,7 +582,15 @@ function Sidebar(props: {
               </a>
             ))}
           </div>
-          {comps.length > 8 && <p className="mt-2 text-xs text-neutral-500">+{comps.length - 8} more</p>}
+          {comps.length > 8 && (
+            <button
+              onClick={() => setShowAllComps((v) => !v)}
+              className="mt-2 flex items-center gap-1 text-xs text-neutral-500 transition hover:text-neutral-900 dark:hover:text-neutral-100"
+            >
+              <span className={`transition-transform ${showAllComps ? 'rotate-180' : ''}`}>⌄</span>
+              {showAllComps ? 'show fewer' : `+${comps.length - 8} more`}
+            </button>
+          )}
         </Section>
       )}
 
