@@ -37,6 +37,7 @@ export function Pipeline({ start, onReset }: { start: Start; onReset: () => void
   const [active, setActive] = useState(1);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [comps, setComps] = useState<Hit[] | null>(null);
+  const [newCategory, setNewCategory] = useState(false);
   const [camps, setCamps] = useState<Campaign[] | null>(null);
   const [found, setFound] = useState<Record<string, Scored[]>>({});
   const [leads, setLeads] = useState<Record<string, Person[]>>({});
@@ -82,7 +83,10 @@ export function Pipeline({ start, onReset }: { start: Start; onReset: () => void
               else setDone((d) => new Set(d).add(ev.step));
               break;
             case 'profile': setProfile(ev.data); break;
-            case 'competitors': setComps(ev.data); break;
+            case 'competitors':
+              setComps(ev.data);
+              setNewCategory(Boolean(ev.newCategory));
+              break;
             case 'campaigns':
               setCamps(ev.data);
               break;
@@ -148,7 +152,7 @@ export function Pipeline({ start, onReset }: { start: Start; onReset: () => void
 
         {!error && active === 1 && !profile && <Logs logs={logs} />}
 
-        {!error && active === 2 && (comps === null ? <CompetitorsSkeleton /> : <CompetitorsPanel profile={profile} comps={comps} provider={provider} />)}
+        {!error && active === 2 && (comps === null ? <CompetitorsSkeleton /> : <CompetitorsPanel profile={profile} comps={comps} provider={provider} newCategory={newCategory} />)}
 
         {!error && active === 3 && (camps === null ? <CampaignsSkeleton /> : <CampaignsGrid camps={camps} counts={found} />)}
 
@@ -335,7 +339,7 @@ function Tabs({ view, setView }: { view: string; setView: (v: 'companies' | 'peo
   );
 }
 
-function CompetitorsPanel({ profile, comps, provider }: { profile: Profile | null; comps: Hit[]; provider: string }) {
+function CompetitorsPanel({ profile, comps, provider, newCategory }: { profile: Profile | null; comps: Hit[]; provider: string; newCategory: boolean }) {
   return (
     <div className="grid gap-8 rounded-2xl border border-neutral-200 p-6 md:grid-cols-2 dark:border-neutral-800">
       <div>
@@ -360,6 +364,18 @@ function CompetitorsPanel({ profile, comps, provider }: { profile: Profile | nul
             {comps.length} found
           </span>
         </p>
+        {newCategory && (
+          <div className="mt-2 rounded-xl border border-emerald-300 bg-emerald-50 p-4 text-sm dark:border-emerald-900 dark:bg-emerald-950">
+            <p className="font-medium text-emerald-800 dark:text-emerald-300">
+              No established competitor found.
+            </p>
+            <p className="mt-1 text-emerald-700 dark:text-emerald-400">
+              Everything search returned was coverage of the topic rather than a product
+              sold against yours. For a new category that is the honest answer — but it
+              also means the segments below are inferred from your description alone.
+            </p>
+          </div>
+        )}
         <div className="mt-2 space-y-1.5">
           {comps.map((c) => (
             <a

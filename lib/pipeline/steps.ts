@@ -123,31 +123,95 @@ export async function buildProfileFromDescription(
 
 const CompetitorGuessSchema = z.object({
   competitors: z
-    .array(z.object({ domain: z.string(), name: z.string(), note: z.string() }))
-    ,
+    .array(z.object({ domain: z.string(), name: z.string(), note: z.string() })),
 });
 
-export async function findCompetitors(profile: ProfileOut, selfDomain?: string): Promise<SearchHit[]> {
+const CompetitorScoreSchema = z.object({
+  scores: z.array(
+    z.object({
+      domain: z.string(),
+      /** 0-5: is this a company selling a competing or substitute product? */
+      score: z.number(),
+      reason: z.string(),
+    }),
+  ),
+});
+
+export type CompetitorResult = {
+  hits: SearchHit[];
+  /** True when nothing scored as a real competing product. */
+  newCategory: boolean;
+};
+
+/**
+ * Competitors, scored.
+ *
+ * Search for a novel idea returns news, explainers and directories, not
+ * products — so an unscored list reads as nonsense. Each candidate is judged on
+ * one question: does this company sell something a buyer would choose INSTEAD
+ * of the product?
+ *
+ * When nothing survives, that is a finding rather than a failure: no
+ * established competitor is exactly what a blue-ocean idea should show.
+ */
+export async function findCompetitors(
+  profile: ProfileOut,
+  selfDomain?: string,
+): Promise<CompetitorResult> {
+  let candidates: SearchHit[];
+
   if (hasSearch()) {
     const batches = await Promise.all(profile.queries.map((q) => searchWeb(q, 8, selfDomain)));
     const seen = new Set<string>();
-    return batches.flat().filter((h) => !seen.has(h.domain) && seen.add(h.domain));
+    candidates = batches.flat().filter((h) => !seen.has(h.domain) && seen.add(h.domain));
+  } else {
+    // Search unavailable: fall back to model recall, flagged unverified in the UI.
+    const object = await generate({
+      schema: CompetitorGuessSchema,
+      prompt:
+        `List real companies competing with this product. Only ones you are confident exist.\n\n` +
+        `Product: ${profile.product}\n${profile.description}\n` +
+        `Distinctive: ${profile.bullets.join('; ')}\n\n` +
+        `If this is a genuinely new category with no established competitor, return an ` +
+        `empty list rather than loosely related companies.`,
+      maxOutputTokens: 4_000,
+    });
+    candidates = object.competitors.slice(0, 12).map((c) => ({
+      domain: c.domain.replace(/^https?:\/\//, '').replace(/\/.*$/, ''),
+      name: c.name,
+      snippet: c.note,
+      verified: false,
+    }));
   }
 
-  // Search unavailable: fall back to model recall, flagged unverified in the UI.
-  const object = await generate({
-    schema: CompetitorGuessSchema,
+  if (candidates.length === 0) return { hits: [], newCategory: true };
+
+  const scored = await generate({
+    schema: CompetitorScoreSchema,
     prompt:
-      `List real companies competing with this product. Only ones you are confident exist.\n\n` +
-      `Product: ${profile.product}\n${profile.description}\n` +
-      `Distinctive: ${profile.bullets.join('; ')}`,
-  });
-  return object.competitors.slice(0, 12).map((c) => ({
-    domain: c.domain.replace(/^https?:\/\//, '').replace(/\/.*$/, ''),
-    name: c.name,
-    snippet: c.note,
-    verified: false,
-  }));
+      `Score each result on whether it is a COMPETING PRODUCT.\n\n` +
+      `Our product: ${profile.product}\n${profile.description}\n` +
+      `Distinctive: ${profile.bullets.join('; ')}\n\n` +
+      `Candidates:\n` +
+      candidates.map((h) => `- ${h.domain} — ${h.name ?? ''} — ${h.snippet ?? ''}`).join('\n') +
+      `\n\n5 = a company selling a direct alternative a buyer would choose instead.\n` +
+      `3 = an adjacent product solving part of the same problem.\n` +
+      `0-2 = a news article, blog post, directory, forum, encyclopedia, app store, ` +
+      `marketplace listing, or a company in an unrelated business.\n` +
+      `Be strict. Writing ABOUT the topic is not competing in it.`,
+    maxOutputTokens: 8_000,
+  }).catch(() => null);
+
+  if (!scored) return { hits: candidates.slice(0, 12), newCategory: false };
+
+  const byDomain = new Map(scored.scores.map((x) => [x.domain, x]));
+  const kept = candidates
+    .map((h) => ({ hit: h, score: byDomain.get(h.domain)?.score ?? 0 }))
+    .filter((x) => x.score >= 3)
+    .sort((a, b) => b.score - a.score)
+    .map((x) => x.hit);
+
+  return { hits: kept.slice(0, 12), newCategory: kept.length === 0 };
 }
 
 /* ---------------------------------------------------------------- step 3 */
@@ -192,7 +256,7 @@ export async function defineCampaigns(
   const context =
     `Product: ${profile.product}\n${profile.description}\n` +
     `Distinctive: ${profile.bullets.join('; ')}\n` +
-    `Competitors: ${competitors.slice(0, 8).map((c) => c.domain).join(', ') || 'unknown'}`;
+    `Competitors: ${competitors.slice(0, 8).map((c) => c.domain).join(', ') || 'none established — treat this as a new category'}`;
 
   const named = await generate({
     schema: SegmentNamesSchema,

@@ -75,13 +75,13 @@ export async function POST(req: Request) {
 
         /* step 2 ------------------------------------------------------- */
         send({ type: 'step', step: 2, status: 'start' });
-        const hits = await findCompetitors(profile, selfDomain);
+        const { hits, newCategory } = await findCompetitors(profile, selfDomain);
         for (const h of hits) {
           await db
             ?.insert(competitors)
             .values({ id: randomUUID(), runId, domain: h.domain, name: h.name, note: h.snippet });
         }
-        send({ type: 'competitors', data: hits });
+        send({ type: 'competitors', data: hits, newCategory });
         if (searchFailure()) send({ type: 'warning', text: searchFailure()! });
         send({ type: 'step', step: 2, status: 'done' });
 
